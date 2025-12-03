@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Calculator, RotateCcw, Plus, Trash2, Database, Sigma, Table, 
   Activity, Pencil, X as XIcon, AlertTriangle, Save, LineChart, 
-  ChevronDown, ChevronUp, Info, Download, Clipboard, 
+  ChevronDown, ChevronUp, BookOpen, Info, Download, Clipboard, 
   Check, FileSpreadsheet, Undo, Redo, Sparkles, TrendingUp,
   Menu, Moon, Sun
 } from 'lucide-react';
@@ -233,6 +233,104 @@ const FormulaDisplay = ({ stats, slope, intercept, stdErrA, stdErrB }) => {
   );
 };
 
+// 公式解説モーダル
+const MathFormulaModal = ({ onClose }) => {
+  const Fraction = ({ num, den }) => (
+    <div className="inline-flex flex-col items-center align-middle mx-1 font-serif text-sm">
+      <div className="border-b border-current px-1 mb-[1px]">{num}</div>
+      <div className="px-1">{den}</div>
+    </div>
+  );
+  
+  const BigSqrt = ({ children }) => (
+    <div className="inline-flex items-stretch mx-1 align-middle">
+      <div className="flex items-center text-lg leading-none transform scale-y-125 origin-center select-none" style={{ fontFamily: 'serif' }}>√</div>
+      <div className="border-t border-current mt-[0.6em] px-1 pt-0.5">{children}</div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto border border-slate-200 dark:border-slate-700" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 p-4 flex justify-between items-center z-10">
+          <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2"><BookOpen className="w-5 h-5 text-indigo-600 dark:text-indigo-400" /> 公式・計算原理</h2>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 dark:text-slate-400"><XIcon className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-8 text-slate-700 dark:text-slate-300">
+          <section>
+            <h3 className="text-xs font-bold text-indigo-500 dark:text-indigo-400 uppercase tracking-widest mb-3">0. 原理</h3>
+            <div className="bg-slate-50 dark:bg-slate-800 p-5 rounded-xl border border-slate-100 dark:border-slate-700 text-sm leading-relaxed">
+              <p className="mb-3 font-bold">「誤差の二乗和を最小にする」とは？</p>
+              <p className="mb-2">
+                実験データなどには必ず「誤差」が含まれており、すべての点を完璧に通る直線は引けません。
+                そこで、「すべての点から直線までの『縦のズレ（残差）』の二乗の合計」を計算し、その値が最も小さくなるような直線を「最も確からしい直線（近似直線）」として採用します。
+              </p>
+              <p>
+                二乗する理由は、プラスのズレとマイナスのズレが打ち消し合うのを防ぐため、そして大きなズレほどペナルティを大きくして重視するためです。
+              </p>
+            </div>
+          </section>
+          <section>
+            <h3 className="text-xs font-bold text-indigo-500 dark:text-indigo-400 uppercase tracking-widest mb-3">1. パラメータの公式</h3>
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4 rounded-xl flex flex-col items-center justify-center">
+                <div className="text-xs text-slate-400 mb-2 font-bold">傾き (Slope)</div>
+                <div className="flex items-center gap-2 font-serif text-lg">
+                  <span className="italic">a</span> = <Fraction num={<span>n<span className="italic">Σxy</span> - <span className="italic">ΣxΣy</span></span>} den={<span>n<span className="italic">Σx²</span> - (<span className="italic">Σx</span>)²</span>} />
+                </div>
+              </div>
+              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4 rounded-xl flex flex-col items-center justify-center">
+                <div className="text-xs text-slate-400 mb-2 font-bold">切片 (Intercept)</div>
+                <div className="flex items-center gap-2 font-serif text-lg">
+                  <span className="italic">b</span> = <Fraction num={<span><span className="italic">Σx²Σy</span> - <span className="italic">ΣxyΣx</span></span>} den={<span>n<span className="italic">Σx²</span> - (<span className="italic">Σx</span>)²</span>} />
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="text-xs font-bold text-indigo-500 dark:text-indigo-400 uppercase tracking-widest mb-3">2. 誤差の公式</h3>
+            <div className="space-y-4 text-sm">
+               <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-xl border border-slate-100 dark:border-slate-700">
+                 <div className="mb-3 font-bold text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wider">準備 (中間変数)</div>
+                 <div className="grid gap-3">
+                   <div className="flex items-center gap-2 flex-wrap">
+                     <span>残差分散 $V_e$ = </span>
+                     <Fraction num={<span>$\Sigma(y - (ax+b))^2$</span>} den={<span>$n - 2$</span>} />
+                   </div>
+                   <div className="flex items-center gap-2 flex-wrap">
+                     <span>偏差平方和 $S_{xx}$ = </span>
+                     <Fraction num={<span>$n\Sigma x^2 - (\Sigma x)^2$</span>} den={<span>$n^2$</span>} />
+                     <span className="text-xs text-slate-400 ml-1">(※ $D/n$ と同等)</span>
+                   </div>
+                 </div>
+               </div>
+
+               <div className="grid md:grid-cols-2 gap-4">
+                 <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4 rounded-xl flex flex-col items-center justify-center">
+                   <div className="text-xs text-slate-400 mb-2 font-bold">傾きの誤差 ($\Delta a$)</div>
+                   <div className="flex items-center gap-2 font-serif text-lg">
+                     <span className="italic">Δa</span> = <BigSqrt><Fraction num={<span>$V_e$</span>} den={<span>$S_{xx}$</span>} /></BigSqrt>
+                   </div>
+                 </div>
+                 <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4 rounded-xl flex flex-col items-center justify-center">
+                   <div className="text-xs text-slate-400 mb-2 font-bold">切片の誤差 ($\Delta b$)</div>
+                   <div className="flex items-center gap-2 font-serif text-lg">
+                     <span className="italic">Δb</span> = <BigSqrt><Fraction num={<span>$V_e \Sigma x^2$</span>} den={<span>$n S_{xx}$</span>} /></BigSqrt>
+                   </div>
+                 </div>
+               </div>
+            </div>
+          </section>
+        </div>
+        <div className="sticky bottom-0 bg-slate-50 dark:bg-slate-800 p-4 border-t border-slate-200 dark:border-slate-700 text-right">
+          <button onClick={onClose} className="bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 px-6 py-2 rounded-lg font-bold text-sm">閉じる</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const PasteImportModal = ({ onClose, onImport }) => {
   const [text, setText] = useState(''); const [preview, setPreview] = useState([]);
   useEffect(() => { if (!text.trim()) { setPreview([]); return; } const lines = text.trim().split(/\r?\n/); const parsed = []; for (let line of lines) { const parts = line.split(/[,\t\s]+/).filter(s => s !== ''); if (parts.length >= 2) { const x = parseFloat(parts[0]); const y = parseFloat(parts[1]); if (!isNaN(x) && !isNaN(y)) parsed.push({ x, y }); } } setPreview(parsed); }, [text]);
@@ -256,6 +354,8 @@ const PasteImportModal = ({ onClose, onImport }) => {
 };
 
 const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+
   if (!data || data.length === 0) return null;
   const validData = data.filter(d => !isNaN(d.x) && !isNaN(d.y));
   if (validData.length === 0) return null;
@@ -319,8 +419,58 @@ const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
       <rect x={padding} y={padding} width={width - 2*padding} height={height - 2*padding} fill="none" stroke={isDarkMode ? "#475569" : "#cbd5e1"} strokeWidth="1" />
       <g clipPath="url(#chartArea)">
         {lineCoords && isFinite(lineCoords.y1) && isFinite(lineCoords.y2) && <line x1={lineCoords.x1} y1={lineCoords.y1} x2={lineCoords.x2} y2={lineCoords.y2} stroke="#6366f1" strokeWidth="2" />}
-        {validData.map(p => (<circle key={p.id} cx={scaleX(p.x)} cy={scaleY(p.y)} r="4" fill="#8b5cf6" fillOpacity="0.8" stroke="white" strokeWidth="2" />))}
+        {validData.map(p => (
+          <circle 
+            key={p.id} 
+            cx={scaleX(p.x)} 
+            cy={scaleY(p.y)} 
+            r="6" 
+            fill="#8b5cf6" 
+            fillOpacity="0.8" 
+            stroke="white" 
+            strokeWidth="2" 
+            onMouseEnter={() => setHoveredPoint(p)}
+            onMouseLeave={() => setHoveredPoint(null)}
+            className="cursor-pointer hover:opacity-100 transition-opacity"
+          />
+        ))}
       </g>
+
+      {hoveredPoint && (() => {
+        const x = scaleX(hoveredPoint.x);
+        const y = scaleY(hoveredPoint.y);
+        const tooltipText = `(${hoveredPoint.x}, ${hoveredPoint.y})`;
+        const isRight = x > width / 2;
+        const xOffset = isRight ? -10 : 10;
+        const textAnchor = isRight ? "end" : "start";
+
+        return (
+          <g pointerEvents="none">
+            <rect
+              x={isRight ? x - (tooltipText.length * 7 + 20) : x + 10}
+              y={y - 25}
+              width={tooltipText.length * 7 + 10}
+              height="20"
+              rx="4"
+              fill={isDarkMode ? "#1e293b" : "white"}
+              stroke={isDarkMode ? "#475569" : "#cbd5e1"}
+              strokeWidth="1"
+              fillOpacity="0.9"
+            />
+            <text
+              x={x + xOffset}
+              y={y - 15}
+              fontSize="12"
+              fill={isDarkMode ? "white" : "#1e293b"}
+              alignmentBaseline="middle"
+              textAnchor={textAnchor}
+              fontWeight="bold"
+            >
+              {tooltipText}
+            </text>
+          </g>
+        );
+      })()}
     </svg>
   );
 };
@@ -346,6 +496,7 @@ const LeastSquaresErrorCalc = () => {
   // UI State
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showFormula, setShowFormula] = useState(false);
+  const [showRefModal, setShowRefModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -443,7 +594,7 @@ const LeastSquaresErrorCalc = () => {
   const getStats = () => mode === 'raw' ? rawStats : { n: parseFloat(manualStats.n)||0, sumX: parseFloat(manualStats.sumX)||0, sumY: parseFloat(manualStats.sumY)||0, sumX2: parseFloat(manualStats.sumX2)||0, sumXY: parseFloat(manualStats.sumXY)||0, sumResiduals: parseFloat(manualStats.sumResiduals)||0 };
 
   return (
-    <div className={`min-h-screen font-sans transition-colors duration-200 ${isDarkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'} pb-12`}>
+    <div className={`min-h-screen font-sans transition-colors duration-200 ${isDarkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-white text-slate-800'} pb-12`}>
       <div className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-30 shadow-sm/50">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -475,6 +626,14 @@ const LeastSquaresErrorCalc = () => {
                     >
                       {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                       {isDarkMode ? 'ライトモード' : 'ダークモード'}
+                    </button>
+                    <div className="border-t border-slate-100 dark:border-slate-700 my-1"></div>
+                    <button 
+                      onClick={() => { setShowRefModal(true); setIsMenuOpen(false); }}
+                      className="w-full text-left px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3 transition-colors"
+                    >
+                      <BookOpen className="w-4 h-4" />
+                      最小二乗法の原理・解説
                     </button>
                   </div>
                 </div>
@@ -616,6 +775,7 @@ const LeastSquaresErrorCalc = () => {
         </div>
       </div>
       {showConfirmModal && <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm"><div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full"><h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">全削除しますか？</h3><p className="text-slate-600 dark:text-slate-300 mb-6 text-sm">現在の入力データがすべて消去されます。</p><div className="flex justify-end gap-3"><button onClick={() => setShowConfirmModal(false)} className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-sm font-bold">キャンセル</button><button onClick={handleResetExecute} className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-bold shadow-lg shadow-red-500/30">削除</button></div></div></div>}
+      {showRefModal && <MathFormulaModal onClose={() => setShowRefModal(false)} />}
       {showImportModal && <PasteImportModal onClose={() => setShowImportModal(false)} onImport={handleImportData} />}
     </div>
   );
