@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createRoot } from 'react-dom/client';
 import { 
   Calculator, RotateCcw, Plus, Trash2, Database, Sigma, Table, 
   Activity, Pencil, X as XIcon, AlertTriangle, Save, LineChart, 
   ChevronDown, ChevronUp, BookOpen, Info, Download, Clipboard, 
   Check, FileSpreadsheet, Undo, Redo, Sparkles, TrendingUp,
-  Menu, Moon, Sun
+  Menu, Moon, Sun, ArrowUp, ArrowDown, Layout
 } from 'lucide-react';
 
 // ==========================================
@@ -84,6 +85,82 @@ const StatBadge = ({ label, value, highlight = false }) => (
   </div>
 );
 
+// 詳細データ表コンポーネント (残差二乗列)
+const DetailedDataTable = ({ data, slope, intercept }) => {
+  if (!data || data.length === 0) return null;
+
+  const rows = data.map((p, index) => {
+    const residualSq = (slope !== null && intercept !== null) 
+      ? Math.pow(p.y - (slope * p.x + intercept), 2) 
+      : null;
+
+    return {
+      no: index + 1,
+      x: p.x,
+      y: p.y,
+      x2: p.x * p.x,
+      xy: p.x * p.y,
+      residualSq: residualSq
+    };
+  });
+
+  const totals = rows.reduce((acc, curr) => ({
+    x: acc.x + curr.x,
+    y: acc.y + curr.y,
+    x2: acc.x2 + curr.x2,
+    xy: acc.xy + curr.xy,
+    residualSq: (acc.residualSq !== null && curr.residualSq !== null) ? acc.residualSq + curr.residualSq : null
+  }), { x: 0, y: 0, x2: 0, xy: 0, residualSq: 0 });
+
+  if (slope === null || intercept === null) totals.residualSq = null;
+
+  return (
+    <div className="w-full overflow-hidden border border-slate-200 dark:border-slate-700 rounded-xl mb-6">
+      <div className="bg-slate-50 dark:bg-slate-700/50 border-b border-slate-200 dark:border-slate-700 px-4 py-2">
+        <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-2">
+          <Table className="w-3.5 h-3.5" /> 計算データ表
+        </h4>
+      </div>
+      <div className="overflow-x-auto max-h-64 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-600">
+        <table className="w-full text-sm text-right border-collapse">
+          <thead className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 sticky top-0 z-10 shadow-sm">
+            <tr>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 text-center whitespace-nowrap">No.</th>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">X</th>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">Y</th>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">X²</th>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">XY</th>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap text-indigo-600 dark:text-indigo-400">(Y - aX - b)²</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-700 bg-white dark:bg-slate-800/50">
+            {rows.map((row) => (
+              <tr key={row.no} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors font-mono text-slate-600 dark:text-slate-300">
+                <td className="px-4 py-1.5 text-center text-slate-400 dark:text-slate-500 text-xs">{row.no}</td>
+                <td className="px-4 py-1.5">{safeRound(row.x)}</td>
+                <td className="px-4 py-1.5">{safeRound(row.y)}</td>
+                <td className="px-4 py-1.5">{safeRound(row.x2)}</td>
+                <td className="px-4 py-1.5">{safeRound(row.xy)}</td>
+                <td className="px-4 py-1.5 text-indigo-600 dark:text-indigo-400 font-medium">{safeRound(row.residualSq)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot className="bg-indigo-50 dark:bg-slate-800 font-bold text-indigo-900 dark:text-indigo-100 sticky bottom-0 z-10 shadow-[0_-1px_2px_rgba(0,0,0,0.05)] border-t border-indigo-100 dark:border-slate-700">
+            <tr>
+              <td className="px-4 py-2 text-center text-xs">Σ</td>
+              <td className="px-4 py-2 font-mono">{safeRound(totals.x)}</td>
+              <td className="px-4 py-2 font-mono">{safeRound(totals.y)}</td>
+              <td className="px-4 py-2 font-mono">{safeRound(totals.x2)}</td>
+              <td className="px-4 py-2 font-mono">{safeRound(totals.xy)}</td>
+              <td className="px-4 py-2 font-mono">{safeRound(totals.residualSq)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 // 予測ツール
 const PredictionCalculator = ({ slope, intercept }) => {
   const [predX, setPredX] = useState('');
@@ -96,7 +173,7 @@ const PredictionCalculator = ({ slope, intercept }) => {
   const formulaStr = slope !== null ? `y = ${safeRound(slope, 3)}x ${intercept >= 0 ? '+' : '-'} ${Math.abs(safeRound(intercept, 3))}` : '';
 
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 animate-fade-in transition-colors">
+    <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 animate-fade-in transition-colors mt-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">
         <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2">
           <TrendingUp className="w-4 h-4 text-indigo-500" /> 値の予測
@@ -195,7 +272,7 @@ const FormulaDisplay = ({ stats, slope, intercept, stdErrA, stdErrB }) => {
             <div>
               <p className="text-indigo-300 mb-1 font-bold text-xs">残差分散 Ve</p>
               <div className="pl-3 border-l-2 border-slate-700 text-xs flex items-center gap-2 flex-wrap">
-                <span>Ve = </span><FractionLayout num={<span>Σ(Y-aX-b)²</span>} den="n - 2" />
+                <span>Ve = </span><FractionLayout num={<span>Σ(Y - aX - b)²</span>} den="n - 2" />
                 <span> = </span><FractionLayout num={fN(sumResiduals)} den={n-2} />
                 <span> = </span><span className="text-blue-300">{fN(Ve)}</span>
               </div>
@@ -296,7 +373,7 @@ const MathFormulaModal = ({ onClose }) => {
                  <div className="grid gap-3">
                    <div className="flex items-center gap-2 flex-wrap">
                      <span>残差分散 $V_e$ = </span>
-                     <Fraction num={<span>$\Sigma(y - (ax+b))^2$</span>} den={<span>$n - 2$</span>} />
+                     <Fraction num={<span>$\Sigma(Y - aX - b)^2$</span>} den={<span>$n - 2$</span>} />
                    </div>
                    <div className="flex items-center gap-2 flex-wrap">
                      <span>偏差平方和 $S_{xx}$ = </span>
@@ -353,9 +430,100 @@ const PasteImportModal = ({ onClose, onImport }) => {
   );
 };
 
-const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
-  const [hoveredPoint, setHoveredPoint] = useState(null);
+// レイアウト編集モーダル
+const LayoutEditModal = ({ currentOrder, onSave, onClose }) => {
+  const [order, setOrder] = useState(currentOrder);
 
+  const moveItem = (index, direction) => {
+    const newOrder = [...order];
+    if (direction === 'up' && index > 0) {
+      [newOrder[index], newOrder[index - 1]] = [newOrder[index - 1], newOrder[index]];
+    } else if (direction === 'down' && index < newOrder.length - 1) {
+      [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
+    }
+    setOrder(newOrder);
+  };
+
+  const getLabel = (id) => {
+    if (id === 'regression') return '近似直線 (結果表示)';
+    if (id === 'analysis') return 'データ分析 (表・グラフ)';
+    return id;
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-200 dark:border-slate-700" onClick={e => e.stopPropagation()}>
+        <div className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-4 flex justify-between items-center">
+          <h2 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+            <Layout className="w-5 h-5 text-indigo-600 dark:text-indigo-400" /> レイアウト編集
+          </h2>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-slate-500 dark:text-slate-400"><XIcon className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5">
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">表示順序を並び替えます。</p>
+          <div className="space-y-2">
+            {order.map((item, index) => (
+              <div key={item} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+                <span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{getLabel(item)}</span>
+                <div className="flex gap-1">
+                  <button 
+                    onClick={() => moveItem(index, 'up')} 
+                    disabled={index === 0}
+                    className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg text-slate-500 disabled:opacity-30 transition-colors"
+                  >
+                    <ArrowUp className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={() => moveItem(index, 'down')} 
+                    disabled={index === order.length - 1}
+                    className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg text-slate-500 disabled:opacity-30 transition-colors"
+                  >
+                    <ArrowDown className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="p-4 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-sm font-bold transition-colors">キャンセル</button>
+          <button onClick={() => onSave(order)} className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-bold text-sm shadow-md hover:bg-indigo-700 transition-all">保存</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// CSVダウンロード確認モーダル
+const DownloadConfirmModal = ({ onClose, onConfirm }) => {
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-200 dark:border-slate-700" onClick={e => e.stopPropagation()}>
+        <div className="bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 p-4 flex justify-between items-center">
+          <h2 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+            <Download className="w-5 h-5 text-indigo-600 dark:text-indigo-400" /> ダウンロード確認
+          </h2>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-slate-500 dark:text-slate-400"><XIcon className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5">
+          <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
+            現在の入力データをCSVファイルとしてダウンロードします。<br/>
+            よろしいですか？
+          </p>
+          <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">ファイル名: least_squares_data.csv</p>
+          </div>
+        </div>
+        <div className="p-4 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-sm font-bold transition-colors">キャンセル</button>
+          <button onClick={onConfirm} className="bg-indigo-600 text-white px-6 py-2 rounded-lg font-bold text-sm shadow-md hover:bg-indigo-700 transition-all">ダウンロード</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
   if (!data || data.length === 0) return null;
   const validData = data.filter(d => !isNaN(d.x) && !isNaN(d.y));
   if (validData.length === 0) return null;
@@ -403,6 +571,8 @@ const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
   const gridColor = isDarkMode ? "#334155" : "#e2e8f0"; 
   const zeroColor = isDarkMode ? "#cbd5e1" : "#64748b"; 
 
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
       <defs><clipPath id="chartArea"><rect x={padding} y={padding} width={width - 2*padding} height={height - 2*padding} /></clipPath></defs>
@@ -435,8 +605,7 @@ const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
           />
         ))}
       </g>
-
-      {hoveredPoint && (() => {
+       {hoveredPoint && (() => {
         const x = scaleX(hoveredPoint.x);
         const y = scaleY(hoveredPoint.y);
         const tooltipText = `(${hoveredPoint.x}, ${hoveredPoint.y})`;
@@ -498,6 +667,9 @@ const LeastSquaresErrorCalc = () => {
   const [showFormula, setShowFormula] = useState(false);
   const [showRefModal, setShowRefModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showLayoutModal, setShowLayoutModal] = useState(false);
+  const [showDownloadConfirmModal, setShowDownloadConfirmModal] = useState(false); // CSV確認モーダル
+  const [sectionOrder, setSectionOrder] = useState(['regression', 'analysis']);
   const [copied, setCopied] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -593,8 +765,65 @@ const LeastSquaresErrorCalc = () => {
   
   const getStats = () => mode === 'raw' ? rawStats : { n: parseFloat(manualStats.n)||0, sumX: parseFloat(manualStats.sumX)||0, sumY: parseFloat(manualStats.sumY)||0, sumX2: parseFloat(manualStats.sumX2)||0, sumXY: parseFloat(manualStats.sumXY)||0, sumResiduals: parseFloat(manualStats.sumResiduals)||0 };
 
+  // セクション描画用
+  const renderSection = (sectionId) => {
+    if (sectionId === 'regression') {
+      return (
+        <div key="regression" className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200/60 dark:border-slate-700 overflow-hidden relative mb-6 last:mb-0">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
+          <div className="p-6 md:p-8 text-center">
+            <h2 className="text-sm font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4">近似直線</h2>
+            {result.errorMsg ? <div className="inline-flex items-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300 rounded-full font-medium text-sm border border-red-100 dark:border-red-800"><AlertTriangle className="w-4 h-4" /> {result.errorMsg}</div> : (
+              <div className="space-y-8">
+                <div className="whitespace-nowrap overflow-x-auto py-2 px-1 text-3xl md:text-5xl font-mono font-bold text-slate-800 dark:text-white tracking-tight">
+                  {result.slope !== null ? <>y = <span className="text-indigo-600 dark:text-indigo-400">{safeRound(result.slope, 3)}</span>x {result.intercept >= 0 ? '+' : '-'} <span className="text-purple-600 dark:text-purple-400">{Math.abs(safeRound(result.intercept, 3))}</span></> : <span className="text-slate-300 dark:text-slate-600">y = ax + b</span>}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg mx-auto">
+                  <div className="p-5 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-700 flex flex-col items-center">
+                    <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">傾き a</div>
+                    <div className="text-3xl font-mono font-bold text-indigo-600 dark:text-indigo-400 mb-2">{result.slope !== null ? safeRound(result.slope, 5) : '---'}</div>
+                    {result.stdErrA && (<div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-600 shadow-sm"><span className="text-xs font-bold bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-400">誤差</span><span className="text-base font-mono font-medium">± {safeRound(result.stdErrA, 4)}</span></div>)}
+                  </div>
+                  <div className="p-5 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-700 flex flex-col items-center">
+                    <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">切片 b</div>
+                    <div className="text-3xl font-mono font-bold text-purple-600 dark:text-purple-400 mb-2">{result.intercept !== null ? safeRound(result.intercept, 5) : '---'}</div>
+                    {result.stdErrB && (<div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-600 shadow-sm"><span className="text-xs font-bold bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-400">誤差</span><span className="text-base font-mono font-medium">± {safeRound(result.stdErrB, 4)}</span></div>)}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          {result.slope !== null && (
+            <div className="border-t border-slate-100 dark:border-slate-700">
+              <button onClick={() => setShowFormula(!showFormula)} className="w-full flex items-center justify-center gap-2 py-3 text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                {showFormula ? <ChevronUp className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />} {showFormula ? '途中式を隠す' : '計算プロセスを見る'}
+              </button>
+              {showFormula && (<div className="bg-slate-900 dark:bg-black text-slate-300 p-6 animate-fade-in border-t border-slate-800"><FormulaDisplay stats={getStats()} slope={result.slope} intercept={result.intercept} stdErrA={result.stdErrA} stdErrB={result.stdErrB} /></div>)}
+            </div>
+          )}
+        </div>
+      );
+    } else if (sectionId === 'analysis') {
+      return (
+        <div key="analysis" className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 mb-6 last:mb-0">
+          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 mb-4"><Activity className="w-4 h-4 text-indigo-500" /> データ分析</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-6"><StatBadge label="n" value={getStats().n} /><StatBadge label="ΣX" value={safeRound(getStats().sumX)} /><StatBadge label="ΣY" value={safeRound(getStats().sumY)} /><StatBadge label="ΣX²" value={safeRound(getStats().sumX2)} /><StatBadge label="ΣXY" value={safeRound(getStats().sumXY)} /><StatBadge label="Σ(Y-aX-b)²" value={result.slope ? safeRound(getStats().sumResiduals, 2) : '-'} highlight /></div>
+          
+          {/* 詳細データ表 (修正済み) */}
+          {mode === 'raw' && <DetailedDataTable data={dataPoints} slope={result.slope} intercept={result.intercept} />}
+
+          <div className="w-full aspect-[16/9] bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-700 relative overflow-hidden flex items-center justify-center">
+            {dataPoints.length > 0 ? <div className="w-full h-full p-4"><SimpleScatterPlot data={dataPoints} slope={result.slope} intercept={result.intercept} isDarkMode={isDarkMode} /></div> : <div className="text-slate-300 dark:text-slate-600 flex flex-col items-center gap-2"><LineChart className="w-10 h-10" /><span className="text-sm">データを入力するとグラフが表示されます</span></div>}
+          </div>
+          {result.slope !== null && <PredictionCalculator slope={result.slope} intercept={result.intercept} />}
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
-    <div className={`min-h-screen font-sans transition-colors duration-200 ${isDarkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-white text-slate-800'} pb-12`}>
+    <div className={`min-h-screen font-sans transition-colors duration-200 ${isDarkMode ? 'dark bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'} pb-12`}>
       <div className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky top-0 z-30 shadow-sm/50">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -620,6 +849,14 @@ const LeastSquaresErrorCalc = () => {
                 <div className="fixed inset-0 z-40" onClick={() => setIsMenuOpen(false)}></div>
                 <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden animate-fade-in">
                   <div className="py-1">
+                    <button 
+                      onClick={() => { setShowLayoutModal(true); setIsMenuOpen(false); }}
+                      className="w-full text-left px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3 transition-colors"
+                    >
+                      <Layout className="w-4 h-4" />
+                      レイアウト編集
+                    </button>
+                    <div className="border-t border-slate-100 dark:border-slate-700 my-1"></div>
                     <button 
                       onClick={() => { setIsDarkMode(!isDarkMode); setIsMenuOpen(false); }}
                       className="w-full text-left px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3 transition-colors"
@@ -729,54 +966,16 @@ const LeastSquaresErrorCalc = () => {
           </div>
 
           <div className="lg:col-span-7 space-y-6">
-            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200/60 dark:border-slate-700 overflow-hidden relative">
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
-              <div className="p-6 md:p-8 text-center">
-                <h2 className="text-sm font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4">近似直線</h2>
-                {result.errorMsg ? <div className="inline-flex items-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300 rounded-full font-medium text-sm border border-red-100 dark:border-red-800"><AlertTriangle className="w-4 h-4" /> {result.errorMsg}</div> : (
-                  <div className="space-y-8">
-                    <div className="whitespace-nowrap overflow-x-auto py-2 px-1 text-3xl md:text-5xl font-mono font-bold text-slate-800 dark:text-white tracking-tight">
-                      {result.slope !== null ? <>y = <span className="text-indigo-600 dark:text-indigo-400">{safeRound(result.slope, 3)}</span>x {result.intercept >= 0 ? '+' : '-'} <span className="text-purple-600 dark:text-purple-400">{Math.abs(safeRound(result.intercept, 3))}</span></> : <span className="text-slate-300 dark:text-slate-600">y = ax + b</span>}
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg mx-auto">
-                      <div className="p-5 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-700 flex flex-col items-center">
-                        <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">傾き a</div>
-                        <div className="text-3xl font-mono font-bold text-indigo-600 dark:text-indigo-400 mb-2">{result.slope !== null ? safeRound(result.slope, 5) : '---'}</div>
-                        {result.stdErrA && (<div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-600 shadow-sm"><span className="text-xs font-bold bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-400">誤差</span><span className="text-base font-mono font-medium">± {safeRound(result.stdErrA, 4)}</span></div>)}
-                      </div>
-                      <div className="p-5 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-700 flex flex-col items-center">
-                        <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">切片 b</div>
-                        <div className="text-3xl font-mono font-bold text-purple-600 dark:text-purple-400 mb-2">{result.intercept !== null ? safeRound(result.intercept, 5) : '---'}</div>
-                        {result.stdErrB && (<div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-600 shadow-sm"><span className="text-xs font-bold bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-400">誤差</span><span className="text-base font-mono font-medium">± {safeRound(result.stdErrB, 4)}</span></div>)}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-              {result.slope !== null && (
-                <div className="border-t border-slate-100 dark:border-slate-700">
-                  <button onClick={() => setShowFormula(!showFormula)} className="w-full flex items-center justify-center gap-2 py-3 text-xs font-bold text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                    {showFormula ? <ChevronUp className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />} {showFormula ? '途中式を隠す' : '計算プロセスを見る'}
-                  </button>
-                  {showFormula && (<div className="bg-slate-900 dark:bg-black text-slate-300 p-6 animate-fade-in border-t border-slate-800"><FormulaDisplay stats={getStats()} slope={result.slope} intercept={result.intercept} stdErrA={result.stdErrA} stdErrB={result.stdErrB} /></div>)}
-                </div>
-              )}
-            </div>
-
-            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-              <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 mb-4"><Activity className="w-4 h-4 text-indigo-500" /> データ分析</h3>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-6"><StatBadge label="n" value={getStats().n} /><StatBadge label="ΣX" value={safeRound(getStats().sumX)} /><StatBadge label="ΣY" value={safeRound(getStats().sumY)} /><StatBadge label="ΣX²" value={safeRound(getStats().sumX2)} /><StatBadge label="ΣXY" value={safeRound(getStats().sumXY)} /><StatBadge label="Σ(Y-aX-b)²" value={result.slope ? safeRound(getStats().sumResiduals, 2) : '-'} highlight /></div>
-              <div className="w-full aspect-[16/9] bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-700 relative overflow-hidden flex items-center justify-center">
-                {dataPoints.length > 0 ? <div className="w-full h-full p-4"><SimpleScatterPlot data={dataPoints} slope={result.slope} intercept={result.intercept} isDarkMode={isDarkMode} /></div> : <div className="text-slate-300 dark:text-slate-600 flex flex-col items-center gap-2"><LineChart className="w-10 h-10" /><span className="text-sm">データを入力するとグラフが表示されます</span></div>}
-              </div>
-            </div>
-            {result.slope !== null && <PredictionCalculator slope={result.slope} intercept={result.intercept} />}
+            {/* セクションの順序に基づいて描画 */}
+            {sectionOrder.map(sectionId => renderSection(sectionId))}
           </div>
         </div>
       </div>
       {showConfirmModal && <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm"><div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl p-6 max-w-sm w-full"><h3 className="text-lg font-bold text-slate-800 dark:text-white mb-2">全削除しますか？</h3><p className="text-slate-600 dark:text-slate-300 mb-6 text-sm">現在の入力データがすべて消去されます。</p><div className="flex justify-end gap-3"><button onClick={() => setShowConfirmModal(false)} className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg text-sm font-bold">キャンセル</button><button onClick={handleResetExecute} className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-bold shadow-lg shadow-red-500/30">削除</button></div></div></div>}
       {showRefModal && <MathFormulaModal onClose={() => setShowRefModal(false)} />}
       {showImportModal && <PasteImportModal onClose={() => setShowImportModal(false)} onImport={handleImportData} />}
+      {showLayoutModal && <LayoutEditModal currentOrder={sectionOrder} onSave={(newOrder) => { setSectionOrder(newOrder); setShowLayoutModal(false); }} onClose={() => setShowLayoutModal(false)} />}
+      {showDownloadConfirmModal && <DownloadConfirmModal onClose={() => setShowDownloadConfirmModal(false)} onConfirm={executeExportCSV} />}
     </div>
   );
 };
