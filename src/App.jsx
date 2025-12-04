@@ -85,10 +85,13 @@ const StatBadge = ({ label, value, highlight = false }) => (
   </div>
 );
 
-// 詳細データ表コンポーネント (残差二乗列)
-const DetailedDataTable = ({ data, slope, intercept }) => {
+// 詳細データ表コンポーネント
+const DetailedDataTable = ({ data, slope, intercept, onRequestDownload }) => {
+  const [copied, setCopied] = useState(false);
+
   if (!data || data.length === 0) return null;
 
+  // 計算用のデータ生成
   const rows = data.map((p, index) => {
     const residualSq = (slope !== null && intercept !== null) 
       ? Math.pow(p.y - (slope * p.x + intercept), 2) 
@@ -104,6 +107,7 @@ const DetailedDataTable = ({ data, slope, intercept }) => {
     };
   });
 
+  // 合計計算
   const totals = rows.reduce((acc, curr) => ({
     x: acc.x + curr.x,
     y: acc.y + curr.y,
@@ -114,12 +118,48 @@ const DetailedDataTable = ({ data, slope, intercept }) => {
 
   if (slope === null || intercept === null) totals.residualSq = null;
 
+  // クリップボードにコピー
+  const handleCopy = () => {
+    const header = "No\tX\tY\tX^2\tXY\t(Y-aX-b)^2\n";
+    const body = rows.map(r => `${r.no}\t${r.x}\t${r.y}\t${r.x2}\t${r.xy}\t${r.residualSq !== null ? r.residualSq : ''}`).join('\n');
+    const footer = `Sum\t${totals.x}\t${totals.y}\t${totals.x2}\t${totals.xy}\t${totals.residualSq !== null ? totals.residualSq : ''}`;
+    
+    navigator.clipboard.writeText(header + body + '\n' + footer).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  // CSVダウンロードリクエスト
+  const handleDownloadRequest = () => {
+    const header = "No,X,Y,X^2,XY,(Y-aX-b)^2\n";
+    const body = rows.map(r => `${r.no},${r.x},${r.y},${r.x2},${r.xy},${r.residualSq !== null ? r.residualSq : ''}`).join('\n');
+    const footer = `Sum,${totals.x},${totals.y},${totals.x2},${totals.xy},${totals.residualSq !== null ? totals.residualSq : ''}`;
+    
+    onRequestDownload(header + body + '\n' + footer, 'least_squares_detailed_data.csv');
+  };
+
   return (
     <div className="w-full overflow-hidden border border-slate-200 dark:border-slate-700 rounded-xl mb-6">
-      <div className="bg-slate-50 dark:bg-slate-700/50 border-b border-slate-200 dark:border-slate-700 px-4 py-2">
+      <div className="bg-slate-50 dark:bg-slate-700/50 border-b border-slate-200 dark:border-slate-700 px-4 py-2 flex justify-between items-center flex-wrap gap-2">
         <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-2">
           <Table className="w-3.5 h-3.5" /> 計算データ表
         </h4>
+        <div className="flex gap-2">
+          <button 
+            onClick={handleCopy}
+            className="text-[10px] flex items-center gap-1 px-2 py-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded hover:text-indigo-600 dark:hover:text-indigo-400 dark:text-slate-300 transition-colors"
+          >
+            {copied ? <Check className="w-3 h-3" /> : <Clipboard className="w-3 h-3" />}
+            {copied ? 'コピー完了' : 'コピー'}
+          </button>
+          <button 
+            onClick={handleDownloadRequest}
+            className="text-[10px] flex items-center gap-1 px-2 py-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded hover:text-indigo-600 dark:hover:text-indigo-400 dark:text-slate-300 transition-colors"
+          >
+            <Download className="w-3 h-3" /> CSV
+          </button>
+        </div>
       </div>
       <div className="overflow-x-auto max-h-64 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-600">
         <table className="w-full text-sm text-right border-collapse">
@@ -130,7 +170,9 @@ const DetailedDataTable = ({ data, slope, intercept }) => {
               <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">Y</th>
               <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">X²</th>
               <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">XY</th>
-              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap text-indigo-600 dark:text-indigo-400">(Y - aX - b)²</th>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap text-indigo-600 dark:text-indigo-400">
+                (Y - aX - b)²
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700 bg-white dark:bg-slate-800/50">
@@ -495,7 +537,7 @@ const LayoutEditModal = ({ currentOrder, onSave, onClose }) => {
 };
 
 // CSVダウンロード確認モーダル
-const DownloadConfirmModal = ({ onClose, onConfirm }) => {
+const DownloadConfirmModal = ({ onClose, onConfirm, fileName }) => {
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={onClose}>
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-200 dark:border-slate-700" onClick={e => e.stopPropagation()}>
@@ -507,11 +549,11 @@ const DownloadConfirmModal = ({ onClose, onConfirm }) => {
         </div>
         <div className="p-5">
           <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
-            現在の入力データをCSVファイルとしてダウンロードします。<br/>
+            データをCSVファイルとしてダウンロードします。<br/>
             よろしいですか？
           </p>
           <div className="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">ファイル名: least_squares_data.csv</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-mono truncate">ファイル名: {fileName}</p>
           </div>
         </div>
         <div className="p-4 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
@@ -669,6 +711,7 @@ const LeastSquaresErrorCalc = () => {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showLayoutModal, setShowLayoutModal] = useState(false);
   const [showDownloadConfirmModal, setShowDownloadConfirmModal] = useState(false); // CSV確認モーダル
+  const [downloadConfig, setDownloadConfig] = useState({ content: '', fileName: '' }); // ダウンロード設定
   const [sectionOrder, setSectionOrder] = useState(['regression', 'analysis']);
   const [copied, setCopied] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -759,7 +802,29 @@ const LeastSquaresErrorCalc = () => {
     } 
   };
   
-  const handleExportCSV = () => { if (dataPoints.length === 0) return; const csvContent = "X,Y\n" + dataPoints.map(p => `${p.x},${p.y}`).join('\n'); const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })); link.download = 'least_squares_data.csv'; document.body.appendChild(link); link.click(); document.body.removeChild(link); };
+  // CSVエクスポート機能 (確認モーダル表示)
+  const handleRequestDownload = (content, fileName) => {
+    setDownloadConfig({ content, fileName });
+    setShowDownloadConfirmModal(true);
+  };
+
+  const handleExportCSV = () => { 
+    if (dataPoints.length === 0) return;
+    const csvContent = "X,Y\n" + dataPoints.map(p => `${p.x},${p.y}`).join('\n');
+    handleRequestDownload(csvContent, 'least_squares_data.csv');
+  };
+
+  const executeDownload = () => {
+    const { content, fileName } = downloadConfig;
+    const link = document.createElement('a'); 
+    link.href = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8;' })); 
+    link.download = fileName; 
+    document.body.appendChild(link); 
+    link.click(); 
+    document.body.removeChild(link);
+    setShowDownloadConfirmModal(false);
+  };
+
   const handleCopyToClipboard = () => { if (dataPoints.length === 0) return; navigator.clipboard.writeText("X\tY\n" + dataPoints.map(p => `${p.x}\t${p.y}`).join('\n')).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
   const handleImportData = (parsed) => { addToHistory([...dataPoints, ...parsed.map(p => ({ id: generateId(), x: p.x, y: p.y }))]); setShowImportModal(false); };
   
@@ -809,8 +874,8 @@ const LeastSquaresErrorCalc = () => {
           <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 mb-4"><Activity className="w-4 h-4 text-indigo-500" /> データ分析</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-6"><StatBadge label="n" value={getStats().n} /><StatBadge label="ΣX" value={safeRound(getStats().sumX)} /><StatBadge label="ΣY" value={safeRound(getStats().sumY)} /><StatBadge label="ΣX²" value={safeRound(getStats().sumX2)} /><StatBadge label="ΣXY" value={safeRound(getStats().sumXY)} /><StatBadge label="Σ(Y-aX-b)²" value={result.slope ? safeRound(getStats().sumResiduals, 2) : '-'} highlight /></div>
           
-          {/* 詳細データ表 (修正済み) */}
-          {mode === 'raw' && <DetailedDataTable data={dataPoints} slope={result.slope} intercept={result.intercept} />}
+          {/* 詳細データ表 (残差二乗列、エクスポート機能付き) */}
+          {mode === 'raw' && <DetailedDataTable data={dataPoints} slope={result.slope} intercept={result.intercept} onRequestDownload={handleRequestDownload} />}
 
           <div className="w-full aspect-[16/9] bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-700 relative overflow-hidden flex items-center justify-center">
             {dataPoints.length > 0 ? <div className="w-full h-full p-4"><SimpleScatterPlot data={dataPoints} slope={result.slope} intercept={result.intercept} isDarkMode={isDarkMode} /></div> : <div className="text-slate-300 dark:text-slate-600 flex flex-col items-center gap-2"><LineChart className="w-10 h-10" /><span className="text-sm">データを入力するとグラフが表示されます</span></div>}
@@ -975,7 +1040,7 @@ const LeastSquaresErrorCalc = () => {
       {showRefModal && <MathFormulaModal onClose={() => setShowRefModal(false)} />}
       {showImportModal && <PasteImportModal onClose={() => setShowImportModal(false)} onImport={handleImportData} />}
       {showLayoutModal && <LayoutEditModal currentOrder={sectionOrder} onSave={(newOrder) => { setSectionOrder(newOrder); setShowLayoutModal(false); }} onClose={() => setShowLayoutModal(false)} />}
-      {showDownloadConfirmModal && <DownloadConfirmModal onClose={() => setShowDownloadConfirmModal(false)} onConfirm={executeExportCSV} />}
+      {showDownloadConfirmModal && <DownloadConfirmModal onClose={() => setShowDownloadConfirmModal(false)} onConfirm={executeDownload} fileName={downloadConfig.fileName} />}
     </div>
   );
 };
