@@ -429,13 +429,13 @@ const MathFormulaModal = ({ onClose }) => {
                  <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4 rounded-xl flex flex-col items-center justify-center">
                    <div className="text-xs text-slate-400 mb-2 font-bold">傾きの誤差 ($\Delta a$)</div>
                    <div className="flex items-center gap-2 font-serif text-lg">
-                     <span className="italic">Δa</span> = <BigSqrt><Fraction num={<span>$V_e$</span>} den={<span>$S_{xx}$</span>} /></BigSqrt>
+                     <span className="italic">Δa</span> = <BigSqrt><Fraction num={<span>$V_e$</span>} den={<span>$S_{"{"}xx{"}"}$</span>} /></BigSqrt>
                    </div>
                  </div>
                  <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4 rounded-xl flex flex-col items-center justify-center">
                    <div className="text-xs text-slate-400 mb-2 font-bold">切片の誤差 ($\Delta b$)</div>
                    <div className="flex items-center gap-2 font-serif text-lg">
-                     <span className="italic">Δb</span> = <BigSqrt><Fraction num={<span>$V_e \Sigma x^2$</span>} den={<span>$n S_{xx}$</span>} /></BigSqrt>
+                     <span className="italic">Δb</span> = <BigSqrt><Fraction num={<span>$V_e \Sigma x^2$</span>} den={<span>$n S_{"{"}xx{"}"}$</span>} /></BigSqrt>
                    </div>
                  </div>
                </div>
