@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createRoot } from 'react-dom/client';
-import { 
-  Calculator, RotateCcw, Plus, Trash2, Database, Sigma, Table, 
-  Activity, Pencil, X as XIcon, AlertTriangle, Save, LineChart, 
-  ChevronDown, ChevronUp, BookOpen, Info, Download, Clipboard, 
+import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import {
+  Calculator, RotateCcw, Plus, Trash2, Database, Sigma, Table,
+  Activity, Pencil, X as XIcon, AlertTriangle, Save, LineChart,
+  ChevronDown, ChevronUp, BookOpen, Info, Download, Clipboard,
   Check, FileSpreadsheet, Undo, Redo, Sparkles, TrendingUp,
   Menu, Moon, Sun, ArrowUp, ArrowDown, Layout
 } from 'lucide-react';
+
 
 // ==========================================
 // 1. ユーティリティ関数
@@ -686,11 +687,346 @@ const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
   );
 };
 
+
+
+const StandardErrorCalculator = () => {
+  const navigate = useNavigate();
+
+  // --- タブ（複数データセット）管理 ---
+  const initialTab = { id: generateId(), label: '値を入力 1', values: [] };
+
+  const [tabs, setTabs] = useState([initialTab]);
+  const [activeTabId, setActiveTabId] = useState(initialTab.id);
+
+  // 入力・編集用
+  const [inputVal, setInputVal] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editStr, setEditStr] = useState('');
+
+  const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
+  const values = activeTab?.values ?? [];
+
+  const addTab = () => {
+    const nextIndex = tabs.length + 1;
+    const newTab = { id: generateId(), label: `値を入力 ${nextIndex}`, values: [] };
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+    setInputVal('');
+    setEditingId(null);
+    setEditStr('');
+  };
+
+  const addValue = (e) => {
+    if (e) e.preventDefault();
+    const v = parseFloat(inputVal);
+    if (inputVal.trim() === '' || Number.isNaN(v)) return;
+
+    setTabs(prev =>
+      prev.map(t =>
+        t.id === activeTabId
+          ? { ...t, values: [...t.values, { id: generateId(), v }] }
+          : t
+      )
+    );
+    setInputVal('');
+  };
+
+  const deleteValue = (id) => {
+    if (editingId === id) {
+      setEditingId(null);
+      setEditStr('');
+    }
+    setTabs(prev =>
+      prev.map(t =>
+        t.id === activeTabId
+          ? { ...t, values: t.values.filter(x => x.id !== id) }
+          : t
+      )
+    );
+  };
+
+  const startEdit = (row) => {
+    setEditingId(row.id);
+    setEditStr(String(row.v));
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditStr('');
+  };
+
+  const saveEdit = (id) => {
+    const v = parseFloat(editStr);
+    if (editStr.trim() === '' || Number.isNaN(v)) return;
+
+    setTabs(prev =>
+      prev.map(t =>
+        t.id === activeTabId
+          ? { ...t, values: t.values.map(x => (x.id === id ? { ...x, v } : x)) }
+          : t
+      )
+    );
+    setEditingId(null);
+    setEditStr('');
+  };
+
+  const reset = () => {
+    // 現在のタブだけリセット（必要なら全タブ消去にも変更可）
+    setTabs(prev =>
+      prev.map(t => (t.id === activeTabId ? { ...t, values: [] } : t))
+    );
+    setInputVal('');
+    setEditingId(null);
+    setEditStr('');
+  };
+
+  // --- 計算（現在アクティブなタブの値だけで計算） ---
+  const n = values.length;
+  const sum = values.reduce((acc, x) => acc + x.v, 0);
+  const mean = n > 0 ? sum / n : null;
+
+  // 標本標準偏差 s = sqrt( Σ(x-mean)^2 / (n-1) )
+  const s = (n >= 2)
+    ? Math.sqrt(values.reduce((acc, x) => acc + Math.pow(x.v - mean, 2), 0) / (n - 1))
+    : null;
+
+  // 標準誤差 SE = s / sqrt(n)
+  const se = (n >= 2 && s !== null) ? (s / Math.sqrt(n)) : null;
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 pb-12">
+      {/* ヘッダー：ボタン順を「リセット → 戻る」に入れ替え */}
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm/50">
+        <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="bg-indigo-600 text-white p-1.5 rounded-lg">
+              <Sigma className="w-5 h-5" />
+            </div>
+            <h1 className="text-lg font-bold tracking-tight">標準誤差カリキュレーター</h1>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={reset}
+              className="px-3 py-2 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-sm font-bold text-red-600"
+            >
+              リセット
+            </button>
+            <button
+              onClick={() => navigate('/')}
+              className="px-3 py-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-sm font-bold"
+            >
+              戻る
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto px-4 py-6">
+        {/* 計算式ボックスは削除（要望1） */}
+
+        {/* タブ + ボタン（要望5） */}
+        <div className="flex justify-center mb-6">
+          <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-200 inline-flex items-center gap-1 max-w-full overflow-x-auto">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => {
+                  setActiveTabId(t.id);
+                  setInputVal('');
+                  setEditingId(null);
+                  setEditStr('');
+                }}
+                className={`px-5 py-2.5 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+                  t.id === activeTabId
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'text-slate-500 hover:bg-slate-50'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+
+            <button
+              onClick={addTab}
+              className="px-3 py-2.5 rounded-lg text-sm font-bold text-indigo-600 hover:bg-indigo-50 transition-all flex items-center gap-1 whitespace-nowrap"
+              title="タブを追加"
+            >
+              <Plus className="w-4 h-4" /> 追加
+            </button>
+          </div>
+        </div>
+
+        {/* 入力＋一覧＋計算結果 */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-4">
+            {/* 小数 Enter でエラーが出る件：type=number + step="any" にする（要望2） */}
+            <form onSubmit={addValue} className="flex gap-2">
+              <input
+                type="number"
+                step="any"
+                inputMode="decimal"
+                value={inputVal}
+                onChange={(e) => setInputVal(e.target.value)}
+                placeholder="例: 12.3"
+                className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 outline-none font-mono"
+              />
+              <button
+                type="submit"
+                disabled={!inputVal}
+                className="px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-bold disabled:opacity-50"
+              >
+                追加
+              </button>
+            </form>
+
+            <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden">
+              <div className="max-h-[320px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-xs text-slate-500 uppercase bg-slate-50 sticky top-0 border-b border-slate-200">
+                    <tr>
+                      <th className="px-3 py-2 w-12 text-center">No.</th>
+                      <th className="px-3 py-2 font-mono">値</th>
+                      <th className="px-3 py-2 text-right">Action</th>
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-100">
+                    {values.length === 0 ? (
+                      <tr>
+                        <td colSpan="3" className="px-3 py-10 text-center text-slate-400">
+                          データがありません
+                        </td>
+                      </tr>
+                    ) : (
+                      values.map((x, i) => (
+                        <tr key={x.id} className="hover:bg-slate-50">
+                          <td className="px-3 py-2 text-center text-slate-400 text-xs">
+                            {i + 1}
+                          </td>
+
+                          {/* 値を編集できるように（要望3） */}
+                          <td className="px-3 py-2 font-mono">
+                            {editingId === x.id ? (
+                              <input
+                                type="number"
+                                step="any"
+                                inputMode="decimal"
+                                value={editStr}
+                                onChange={(e) => setEditStr(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    saveEdit(x.id);
+                                  }
+                                  if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    cancelEdit();
+                                  }
+                                }}
+                                className="w-full px-2 py-1.5 rounded-lg border border-slate-200 outline-none font-mono"
+                              />
+                            ) : (
+                              <span
+                                onDoubleClick={() => startEdit(x)}
+                                className="cursor-text"
+                                title="ダブルクリックで編集"
+                              >
+                                {x.v}
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-3 py-2 text-right">
+                            {editingId === x.id ? (
+                              <div className="inline-flex gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => saveEdit(x.id)}
+                                  className="p-1.5 text-slate-500 hover:text-indigo-600"
+                                  title="保存"
+                                >
+                                  <Check className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelEdit}
+                                  className="p-1.5 text-slate-400 hover:text-red-600"
+                                  title="キャンセル"
+                                >
+                                  <XIcon className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="inline-flex gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => startEdit(x)}
+                                  className="p-1.5 text-slate-400 hover:text-amber-600"
+                                  title="編集"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteValue(x.id)}
+                                  className="p-1.5 text-slate-400 hover:text-red-600"
+                                  title="削除"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div className="lg:col-span-7 space-y-4">
+            <div className="bg-white rounded-2xl border border-slate-200 p-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <StatBadge label="n" value={n} />
+                <StatBadge label="平均" value={mean !== null ? safeRound(mean, 6) : '---'} />
+                <StatBadge label="標本標準偏差 s" value={s !== null ? safeRound(s, 6) : '---'} />
+              </div>
+
+              <div className="mt-4 p-4 rounded-xl border border-indigo-100 bg-indigo-50">
+                <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  標準誤差 SE
+                </div>
+                <div className="font-mono text-2xl font-bold text-indigo-700">
+                  {se !== null ? safeRound(se, 6) : '---'}
+                </div>
+                {n < 2 && (
+                  <div className="text-xs text-slate-500 mt-1">
+                    n ≥ 2 のとき計算できます。
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 「s と n を入力」タブは削除（要望4） */}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+
+
 // ==========================================
 // 4. メインアプリコンポーネント
 // ==========================================
 
 const LeastSquaresErrorCalc = () => {
+  const navigate = useNavigate();
   const [mode, setMode] = useState('raw');
   const [result, setResult] = useState({ slope: null, intercept: null, stdErrA: null, stdErrB: null, r2: null, equation: '', errorMsg: '' });
   const [dataPoints, setDataPoints] = useState([]);
@@ -937,6 +1273,14 @@ const LeastSquaresErrorCalc = () => {
                       <BookOpen className="w-4 h-4" />
                       最小二乗法の原理・解説
                     </button>
+                    <button
+                      onClick={() => { navigate('/std-error'); setIsMenuOpen(false); }}
+                     className="w-full text-left px-4 py-3 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3 transition-colors"
+                    >
+                      <BookOpen className="w-4 h-4" />
+                       標準誤差カリキュレーター
+                    </button>
+
                   </div>
                 </div>
               </>
@@ -1050,8 +1394,12 @@ const LeastSquaresErrorCalc = () => {
 // ==========================================
 const AppWithBoundary = () => (
   <ErrorBoundary>
-    <LeastSquaresErrorCalc />
+    <Routes>
+      <Route path="/" element={<LeastSquaresErrorCalc />} />
+      <Route path="/std-error" element={<StandardErrorCalculator />} />
+    </Routes>
   </ErrorBoundary>
 );
 
 export default AppWithBoundary;
+
