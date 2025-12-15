@@ -691,6 +691,8 @@ const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
 
 const StandardErrorCalculator = () => {
   const navigate = useNavigate();
+  const inputRef = useRef(null);
+
 
   // --- タブ（複数データセット）管理 ---
   const initialTab = { id: generateId(), label: '値を入力 1', values: [] };
@@ -729,6 +731,7 @@ const StandardErrorCalculator = () => {
       )
     );
     setInputVal('');
+    requestAnimationFrame(() => inputRef.current?.focus());
   };
 
   const deleteValue = (id) => {
@@ -863,6 +866,7 @@ const StandardErrorCalculator = () => {
             {/* 小数 Enter でエラーが出る件：type=number + step="any" にする（要望2） */}
             <form onSubmit={addValue} className="flex gap-2">
               <input
+                ref={inputRef}
                 type="number"
                 step="any"
                 inputMode="decimal"
@@ -872,12 +876,17 @@ const StandardErrorCalculator = () => {
                 className="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 outline-none font-mono"
               />
               <button
-                type="submit"
+                type="button"
+                onPointerDown={(e) => e.preventDefault()}   // フォーカス移動を防ぐ（対応ブラウザ向け）
+                onTouchStart={(e) => e.preventDefault()}    // iOS Safari 対策
+                onMouseDown={(e) => e.preventDefault()}     // 念のため
+                onClick={addValue}
                 disabled={!inputVal}
                 className="px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-bold disabled:opacity-50"
               >
                 追加
               </button>
+
             </form>
 
             <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden">
