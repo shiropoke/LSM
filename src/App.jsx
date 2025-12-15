@@ -418,7 +418,7 @@ const MathFormulaModal = ({ onClose }) => {
                      <Fraction num={<span>$\Sigma(Y - aX - b)^2$</span>} den={<span>$n - 2$</span>} />
                    </div>
                    <div className="flex items-center gap-2 flex-wrap">
-                     <span>偏差平方和 $S_{xx}$ = </span>
+                     <span>偏差平方和 $S_{"{"}xx{"}"}$ = </span>
                      <Fraction num={<span>$n\Sigma x^2 - (\Sigma x)^2$</span>} den={<span>$n^2$</span>} />
                      <span className="text-xs text-slate-400 ml-1">(※ $D/n$ と同等)</span>
                    </div>
