@@ -41,13 +41,49 @@ import {
 // ==========================================
 // 1) Utils
 // ==========================================
-const safeRound = (num, decimals = 4) => {
+
+// ▼ 有効数字のグローバル設定（アプリ全体で共通）
+let __NUMBER_FORMAT_MODE__ = "sig"; // "sig"（有効数字）/ "dec"（小数桁）
+let __NUMBER_FORMAT_DIGITS__ = 4;   // 既定の有効数字（または小数桁）
+
+const setGlobalNumberFormat = (mode, digits) => {
+  if (mode === "sig" || mode === "dec") __NUMBER_FORMAT_MODE__ = mode;
+  if (Number.isFinite(digits) && digits > 0) __NUMBER_FORMAT_DIGITS__ = Math.floor(digits);
+};
+
+const getGlobalNumberDigits = () => __NUMBER_FORMAT_DIGITS__;
+const getGlobalNumberMode = () => __NUMBER_FORMAT_MODE__;
+
+// ▼ 有効数字で丸める（significant figures）
+const roundToSignificantDigits = (num, sigDigits) => {
+  if (!Number.isFinite(num)) return num;
+  if (num === 0) return 0;
+  // toPrecision は文字列を返すので Number に戻す
+  return Number(Number(num).toPrecision(sigDigits));
+};
+
+// ▼ 小数桁で丸める（decimal places）
+const roundToDecimalPlaces = (num, decimals) => {
+  if (!Number.isFinite(num)) return num;
+  return Number(Math.round(num + "e+" + decimals) + "e-" + decimals);
+};
+
+// ▼ 既存コードの safeRound を「設定に従って」動くようにする
+//    safeRound(value, 4) の「4」は、モードが "sig" なら「有効数字4桁」,
+//    モードが "dec" なら「小数4桁」になります。
+const safeRound = (num, digits = null) => {
   if (num === null || num === undefined || Number.isNaN(num) || !Number.isFinite(num)) return "---";
-  return +(Math.round(num + "e+" + decimals) + "e-" + decimals);
+
+  const mode = getGlobalNumberMode();
+  const d = Number.isFinite(digits) && digits !== null ? Math.floor(digits) : getGlobalNumberDigits();
+
+  if (mode === "sig") return roundToSignificantDigits(num, d);
+  return roundToDecimalPlaces(num, d);
 };
 
 const generateId = () =>
   Date.now().toString(36) + Math.random().toString(36).slice(2, 11);
+
 
 // ==========================================
 // 2) Error Boundary
@@ -156,6 +192,42 @@ const StatBadge = ({ label, value, highlight = false }) => (
     </span>
   </div>
 );
+
+const PrecisionSelector = ({ digits, onChange, mode = "sig", onModeChange }) => {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs font-bold text-slate-500 dark:text-slate-400 whitespace-nowrap">
+        表示
+      </span>
+
+      {/* モード切替（必要なければ消してもOK：有効数字だけで良いなら "sig" 固定でもOK） */}
+      <select
+        value={mode}
+        onChange={(e) => onModeChange?.(e.target.value)}
+        className="text-xs font-bold px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+        title="表示モード"
+      >
+        <option value="sig">有効数字</option>
+        <option value="dec">小数桁</option>
+      </select>
+
+      <select
+        value={digits}
+        onChange={(e) => onChange(parseInt(e.target.value, 10))}
+        className="text-xs font-bold px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+        title="桁数"
+      >
+        {/* 2〜10桁 */}
+        {Array.from({ length: 9 }, (_, i) => i + 2).map((d) => (
+          <option key={d} value={d}>
+            {mode === "sig" ? `${d}桁` : `${d}桁`}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+};
+
 
 // ==========================================
 // 4) Least Squares - Detailed Table
@@ -362,7 +434,14 @@ const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
   const xTicks = generateTicks(domainX[0], domainX[1]);
   const yTicks = generateTicks(domainY[0], domainY[1]);
 
-  const rG = (num) => (Math.abs(num) > 1000 ? num.toExponential(1) : parseFloat(num.toPrecision(4)));
+  const rG = (num) => {
+  const d = getGlobalNumberDigits();
+  if (Math.abs(num) > 1000) return Number(num).toExponential(Math.max(1, d - 1));
+  // 有効数字モードのときは toPrecision、dec モードなら safeRound で
+  if (getGlobalNumberMode() === "sig") return parseFloat(Number(num).toPrecision(d));
+  return safeRound(num, d);
+};
+
 
   let lineCoords = null;
   if (slope !== null && intercept !== null && Number.isFinite(slope) && Number.isFinite(intercept)) {
@@ -843,6 +922,17 @@ const DownloadConfirmModal = ({ onClose, onConfirm, fileName }) => {
 const StandardErrorCalculator = () => {
   const navigate = useNavigate();
 
+  // ▼ 表示桁（有効数字/小数桁）設定（最小二乗法ページと共通）
+  const [numberFormatMode, setNumberFormatMode] = useState(() => localStorage.getItem("numberFormatMode") || "sig");
+  const [numberFormatDigits, setNumberFormatDigits] = useState(() => {
+    const v = Number(localStorage.getItem("numberFormatDigits"));
+    return Number.isFinite(v) && v > 0 ? Math.floor(v) : 4;
+  });
+
+  useEffect(() => {
+    setGlobalNumberFormat(numberFormatMode, numberFormatDigits);
+  }, [numberFormatMode, numberFormatDigits]);
+
   const inputRef = useRef(null);
 
   const [tabs, setTabs] = useState(() => [
@@ -944,6 +1034,13 @@ const StandardErrorCalculator = () => {
             </div>
             <h1 className="text-lg font-bold tracking-tight">標準誤差カリキュレーター</h1>
           </div>
+
+          <PrecisionSelector
+            mode={numberFormatMode}
+            onModeChange={(m) => setNumberFormatMode(m)}
+            digits={numberFormatDigits}
+            onChange={(d) => setNumberFormatDigits(d)}
+          />
 
           {/* ★ リセット / 戻る を入れ替え */}
           <div className="flex gap-2">
@@ -1186,6 +1283,20 @@ const LeastSquaresErrorCalc = () => {
   const [copied, setCopied] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+
+  // ▼ 表示桁（有効数字/小数桁）設定
+  const [numberFormatMode, setNumberFormatMode] = useState(() => localStorage.getItem("numberFormatMode") || "sig");
+  const [numberFormatDigits, setNumberFormatDigits] = useState(() => {
+    const v = Number(localStorage.getItem("numberFormatDigits"));
+    return Number.isFinite(v) && v > 0 ? Math.floor(v) : 4;
+  });
+
+  useEffect(() => {
+    setGlobalNumberFormat(numberFormatMode, numberFormatDigits);
+    localStorage.setItem("numberFormatMode", numberFormatMode);
+    localStorage.setItem("numberFormatDigits", String(numberFormatDigits));
+  }, [numberFormatMode, numberFormatDigits]);
+
 
   useEffect(() => {
     if (isDarkMode) document.documentElement.classList.add("dark");
@@ -1573,6 +1684,12 @@ const LeastSquaresErrorCalc = () => {
             </div>
             <h1 className="text-lg font-bold tracking-tight text-slate-800 dark:text-white">最小二乗法カリキュレーター</h1>
           </div>
+          <PrecisionSelector
+            mode={numberFormatMode}
+            onModeChange={(m) => setNumberFormatMode(m)}
+            digits={numberFormatDigits}
+            onChange={(d) => setNumberFormatDigits(d)}
+          />
 
           <div className="flex gap-2 relative">
             <button
