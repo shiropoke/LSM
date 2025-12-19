@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   HashRouter,
   Routes,
@@ -929,9 +929,10 @@ const StandardErrorCalculator = () => {
     return Number.isFinite(v) && v > 0 ? Math.floor(v) : 4;
   });
 
-  useEffect(() => {
-    setGlobalNumberFormat(numberFormatMode, numberFormatDigits);
-  }, [numberFormatMode, numberFormatDigits]);
+  useMemo(() => {
+  setGlobalNumberFormat(numberFormatMode, numberFormatDigits);
+}, [numberFormatMode, numberFormatDigits]);
+
 
   const inputRef = useRef(null);
 
@@ -1032,7 +1033,6 @@ const StandardErrorCalculator = () => {
             <div className="bg-indigo-600 text-white p-1.5 rounded-lg">
               <Sigma className="w-5 h-5" />
             </div>
-            <h1 className="text-lg font-bold tracking-tight">標準誤差カリキュレーター</h1>
           </div>
 
           <PrecisionSelector
@@ -1291,11 +1291,17 @@ const LeastSquaresErrorCalc = () => {
     return Number.isFinite(v) && v > 0 ? Math.floor(v) : 4;
   });
 
-  useEffect(() => {
-    setGlobalNumberFormat(numberFormatMode, numberFormatDigits);
-    localStorage.setItem("numberFormatMode", numberFormatMode);
-    localStorage.setItem("numberFormatDigits", String(numberFormatDigits));
-  }, [numberFormatMode, numberFormatDigits]);
+  // ▼ ここがポイント：render 中に同期的にグローバル値を更新する（＝その render で safeRound が即反映される）
+useMemo(() => {
+  setGlobalNumberFormat(numberFormatMode, numberFormatDigits);
+}, [numberFormatMode, numberFormatDigits]);
+
+// ▼ 保存は副作用なので useEffect でOK
+useEffect(() => {
+  localStorage.setItem("numberFormatMode", numberFormatMode);
+  localStorage.setItem("numberFormatDigits", String(numberFormatDigits));
+}, [numberFormatMode, numberFormatDigits]);
+
 
 
   useEffect(() => {
@@ -1682,7 +1688,6 @@ const LeastSquaresErrorCalc = () => {
             <div className="bg-indigo-600 text-white p-1.5 rounded-lg">
               <Calculator className="w-5 h-5" />
             </div>
-            <h1 className="text-lg font-bold tracking-tight text-slate-800 dark:text-white">最小二乗法カリキュレーター</h1>
           </div>
           <PrecisionSelector
             mode={numberFormatMode}
