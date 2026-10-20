@@ -1,4 +1,5 @@
-import { parseNumber } from "./statistics.js";
+import { createDataset, defaultReport, emptyManualStats } from "./datasets.js";
+import { parseNumber, validUncertainty } from "./statistics.js";
 
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const makeId = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -27,17 +28,40 @@ export const normalizeSnapshot = (snapshot) => {
   if (snapshot.ls !== undefined) {
     if (!isRecord(snapshot.ls)) throw new Error("近似直線の保存データが不正です。");
     const ls = snapshot.ls;
-    const manualStats = {};
-    for (const key of ["n", "sumX", "sumY", "sumX2", "sumXY", "sumResiduals"]) {
-      const value = ls.manualStats?.[key];
-      manualStats[key] = value == null || value === "" ? "" : String(number(value));
-    }
+    const normalizeDataset = (d, index) => {
+      const defaults = createDataset(index);
+      const manualStats = emptyManualStats();
+      for (const key of Object.keys(manualStats)) {
+        const value = d.manualStats?.[key];
+        manualStats[key] = value == null || value === "" ? "" : String(number(value));
+      }
+      return {
+        name: typeof d.name === "string" ? d.name : defaults.name,
+        color: /^#[0-9a-f]{6}$/i.test(d.color) ? d.color : defaults.color,
+        visible: d.visible !== false,
+        mode: d.mode === "stats" ? "stats" : "raw",
+        fitMode: d.fitMode === "origin" ? "origin" : "linear",
+        manualStats,
+        dataPoints: withIds(d.dataPoints ?? [], p => {
+          if (!validUncertainty(p.dx) || !validUncertainty(p.dy)) throw new Error("不確かさは0以上の数値にしてください。");
+          const point = { x: number(p.x), y: number(p.y) };
+          if (p.dx != null && p.dx !== "") point.dx = number(p.dx);
+          if (p.dy != null && p.dy !== "") point.dy = number(p.dy);
+          return point;
+        }),
+      };
+    };
+    let index = 0;
+    const datasets = withIds(ls.datasets ?? [ls], d => normalizeDataset(d, index++));
+    if (!datasets.length) datasets.push(createDataset());
+    const activeDatasetId = datasets.some(d => d.id === ls.activeDatasetId) ? ls.activeDatasetId : datasets[0].id;
+    const active = datasets.find(d => d.id === activeDatasetId);
+    const report = defaultReport();
+    for (const key of Object.keys(report)) if (typeof ls.report?.[key] === "string") report[key] = ls.report[key];
     const order = Array.isArray(ls.sectionOrder) ? ls.sectionOrder : [];
     result.ls = {
-      mode: ls.mode === "stats" ? "stats" : "raw",
-      dataPoints: withIds(ls.dataPoints ?? [], (p) => ({ x: number(p.x), y: number(p.y) })),
-      manualStats,
-      sectionOrder: [...new Set([...order.filter((id) => ["regression", "analysis"].includes(id)), "regression", "analysis"])],
+      ...active, datasets, activeDatasetId, report,
+      sectionOrder: [...new Set([...order.filter(id => ["regression", "analysis"].includes(id)), "regression", "analysis"])],
       isDarkMode: !!ls.isDarkMode,
     };
   }

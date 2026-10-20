@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculateRegression, calculateFromStats, calculateSampleStats, parseNumber, formatNumber, parsePastedPoints, predictY, sum } from "../src/utils/statistics.js";
+import { calculateRegression, calculateFromStats, calculateSampleStats, parseNumber, formatNumber, parsePastedPoints, predictY, sum, calculateDatasets, validUncertainty } from "../src/utils/statistics.js";
 import { normalizeSnapshot, normalizeSessions } from "../src/utils/session.js";
+import { createDataset } from "../src/utils/datasets.js";
+import { plotBounds } from "../src/utils/plot.js";
 
 const near = (actual, expected, tolerance = 1e-12) => assert.ok(Math.abs(actual - expected) <= tolerance * Math.max(1, Math.abs(expected)), `${actual} != ${expected}`);
 const points = (pairs) => pairs.map(([x, y], id) => ({ id: String(id), x, y }));
@@ -15,7 +17,7 @@ test("known noisy fit: coefficients, residuals, R² and coefficient standard err
   near(r.stdErrA, Math.sqrt(1 / 12));
   near(r.stdErrB, Math.sqrt(7 / 18));
   near(r.rSquared, 27 / 28);
-  assert.deepEqual(r.stats, { n: 3, sumX: 6, sumY: 10, sumX2: 14, sumXY: 23, sumResiduals: r.sumResidualsCalc });
+  assert.deepEqual(r.stats, { n: 3, sumX: 6, sumY: 10, sumX2: 14, sumXY: 23, sumY2: 38, sumResiduals: r.sumResidualsCalc });
   near(sum(r.rows.map((p) => p.residual)), 0);
   near(sum(r.rows.map((p) => p.x * p.residual)), 0);
 });
@@ -24,7 +26,7 @@ test("two distinct points define a line but not its standard errors", () => {
   const r = calculateRegression(points([[0, 0], [2, -4]]));
   assert.equal(r.slope, -2);
   assert.equal(r.intercept, 0);
-  assert.equal(r.sumResidualsCalc, 0);
+  near(r.sumResidualsCalc, 0);
   assert.equal(r.stdErrA, null);
   assert.equal(r.stdErrB, null);
 });
@@ -35,7 +37,7 @@ test("zero slope, zero residuals, and zero errors are valid results", () => {
   assert.equal(r.intercept, 2);
   assert.equal(r.stdErrA, 0);
   assert.equal(r.stdErrB, 0);
-  assert.equal(r.sumResidualsCalc, 0);
+  near(r.sumResidualsCalc, 0);
   assert.equal(r.rSquared, null); // Constant Y has no defined coefficient of determination.
 });
 
@@ -51,22 +53,22 @@ test("large X offsets do not cancel variance or corrupt graph predictions", () =
   const data = points([[1e12, 1], [1e12 + 1, 3], [1e12 + 2, 5]]);
   const r = calculateRegression(data);
   assert.equal(r.errorMsg, "");
-  assert.equal(r.slope, 2);
+  near(r.slope, 2);
   assert.equal(r.intercept, 1 - 2e12);
-  assert.equal(r.sumResidualsCalc, 0);
+  near(r.sumResidualsCalc, 0);
   for (const p of data) assert.equal(predictY(p.x, r), p.y);
 });
 
 test("nonrepresentable means at large offsets still give the correct slope", () => {
   const r = calculateRegression(points([[1e12, 1], [1e12 + 1, 3], [1e12 + 3, 7]]));
-  assert.equal(r.slope, 2);
+  near(r.slope, 2);
   assert.equal(r.intercept, 1 - 2e12);
-  assert.equal(r.sumResidualsCalc, 0);
+  near(r.sumResidualsCalc, 0);
 });
 
 test("insufficient points, identical X, invalid and overflowing values fail safely", () => {
   assert.equal(calculateRegression([]).slope, null);
-  for (const data of [points([[1, 2]]), points([[1, 2], [1, 3]]), points([[0, 0], [Infinity, 1]]), points([[1e200, 2], [2e200, 3]])]) {
+  for (const data of [points([[1, 2]]), points([[1, 2], [1, 3]]), points([[0, 0], [Infinity, 1]])]) {
     const r = calculateRegression(data);
     assert.equal(r.slope, null);
     assert.ok(r.errorMsg);
@@ -77,7 +79,7 @@ test("recalculation after edits and removals uses only current data", () => {
   const data = points([[0, 1], [1, 3], [2, 5]]);
   assert.equal(calculateRegression(data).slope, 2);
   const changed = data.map((p, i) => i === 2 ? { ...p, y: 7 } : p);
-  assert.equal(calculateRegression(changed).slope, 3);
+  near(calculateRegression(changed).slope, 3);
   assert.equal(calculateRegression(changed.slice(0, 2)).slope, 2);
   assert.equal(calculateRegression(changed.slice(0, 1)).slope, null);
 });
@@ -139,9 +141,19 @@ test("pasting preserves empty cells and rejects partial numbers and extra column
   assert.deepEqual(parsePastedPoints("\nX,Y\n1,2").invalidRows, []);
 });
 
-test("underflow is reported instead of displaying a spurious zero variance", () => {
-  assert.ok(calculateSampleStats([1e-200, -1e-200]).errorMsg);
-  assert.ok(calculateRegression(points([[0, 0], [1, 1e-200]])).errorMsg);
+test("scaled calculations handle small and large magnitudes without false zeros", () => {
+  for (const scale of [1e-200, 1e-100, 1e100, 1e200]) {
+    for (const mode of ["linear", "origin"]) {
+      const r = calculateRegression(points([[scale, 2 * scale], [2 * scale, 4 * scale], [3 * scale, 6 * scale]]), mode);
+      assert.equal(r.errorMsg, "");
+      near(r.slope, 2);
+      near(r.rSquared, 1);
+      assert.ok(r.stdErrA < 1e-12);
+    }
+  }
+  const r = calculateSampleStats([1e-200, -1e-200]);
+  assert.equal(r.errorMsg, "");
+  assert.ok(Math.abs(r.sd / 1e-200 - Math.SQRT2) < 1e-12);
 });
 
 test("snapshots preserve both screens and repair duplicate IDs and layout entries", () => {
@@ -157,4 +169,114 @@ test("malformed snapshots cannot inject nonnumeric values or crash session lists
   for (const value of [null, [], { v: 2 }, { ls: { dataPoints: [null] } }, { ls: { dataPoints: [{ x: "bad", y: 1 }] } }, { se: { datasets: "bad" } }]) assert.throws(() => normalizeSnapshot(value));
   assert.deepEqual(normalizeSessions(null), {});
   assert.deepEqual(Object.keys(normalizeSessions({ bad: { snapshot: null }, good: { snapshot: { ls: {} } } })), ["good"]);
+});
+
+
+test("origin fit uses uncentered R², n−1 degrees of freedom and no intercept uncertainty", () => {
+  const r = calculateRegression(points([[1, 2], [2, 3], [3, 5]]), "origin");
+  near(r.slope, 23 / 14);
+  assert.equal(r.intercept, 0);
+  near(r.sumResidualsCalc, 3 / 14);
+  near(r.stdErrA, Math.sqrt(3 / 392));
+  assert.equal(r.stdErrB, null);
+  assert.equal(r.df, 2);
+  near(r.rSquared, 529 / 532);
+  assert.equal(r.rSquaredDefinition, "uncentered");
+});
+
+test("origin fit accepts identical nonzero X and a single nonzero point", () => {
+  const same = calculateRegression(points([[2, 3], [2, 5]]), "origin");
+  near(same.slope, 2);
+  near(same.sumResidualsCalc, 2);
+  near(same.stdErrA, 0.5);
+  const one = calculateRegression(points([[-2, 4]]), "origin");
+  assert.equal(one.slope, -2);
+  assert.equal(one.stdErrA, null);
+  assert.equal(one.df, 0);
+  assert.ok(calculateRegression(points([[0, 1], [0, 2]]), "origin").errorMsg);
+  assert.equal(calculateRegression(points([[1, 0], [2, 0]]), "origin").rSquared, null);
+});
+
+test("origin summary statistics agree with raw fit", () => {
+  const r = calculateFromStats({ n: 3, sumX: 6, sumY: 10, sumX2: 14, sumXY: 23, sumY2: 38, sumResiduals: 3 / 14 }, "origin");
+  near(r.slope, 23 / 14);
+  near(r.stdErrA, Math.sqrt(3 / 392));
+  near(r.rSquared, 529 / 532);
+  assert.equal(r.df, 2);
+});
+
+test("large manual sums do not require an overflowing nΣx² intermediate", () => {
+  for (const fitMode of ["linear", "origin"]) {
+    const r = calculateFromStats({ n: 3, sumX: 0, sumY: 0, sumX2: 1e308, sumXY: 1e308, sumResiduals: 1e100 }, fitMode);
+    assert.equal(r.errorMsg, "");
+    assert.equal(r.slope, 1);
+    assert.ok(r.stdErrA > 0 && r.stdErrA < 1e-100);
+  }
+});
+
+test("unrepresentable slopes fail explicitly rather than becoming zero or infinity", () => {
+  for (const [x, y] of [[1e200, 1e-200], [1e-200, 1e200]]) {
+    const r = calculateRegression([{ x, y }, { x: 2 * x, y: 2 * y }], "origin");
+    assert.equal(r.slope, null);
+    assert.ok(r.errorMsg);
+  }
+});
+
+test("uncertainties are optional, nonnegative and do not weight the fit", () => {
+  for (const value of [null, "", 0, "0", 0.1]) assert.ok(validUncertainty(value));
+  for (const value of [-1, "-0.1", "bad", Infinity]) assert.equal(validUncertainty(value), false);
+  const data = points([[1, 2], [2, 3], [3, 5]]);
+  const baseline = calculateRegression(data);
+  const bars = calculateRegression(data.map((p, i) => ({ ...p, dx: i, dy: i / 10 })));
+  assert.equal(bars.slope, baseline.slope);
+  assert.equal(bars.stdErrA, baseline.stdErrA);
+  assert.ok(calculateRegression([{ x: 1, y: 2, dx: -1 }]).errorMsg);
+});
+
+test("multiple dataset calculations remain independent of edits and visibility", () => {
+  const datasets = [
+    { id: "a", mode: "raw", fitMode: "linear", dataPoints: points([[0, 1], [1, 3], [2, 5]]) },
+    { id: "b", mode: "raw", fitMode: "origin", visible: false, dataPoints: points([[1, -3], [2, -6]]) },
+  ];
+  const before = calculateDatasets(datasets);
+  const edited = calculateDatasets(datasets.map(d => d.id === "a" ? { ...d, dataPoints: points([[0, 0], [1, 10]]) } : d));
+  near(before[0].result.slope, 2);
+  near(edited[0].result.slope, 10);
+  assert.deepEqual(edited[1].result, before[1].result);
+});
+
+test("legacy single-dataset snapshots migrate without losing mode, fit or measurements", () => {
+  const legacy = { v: 1, ls: { mode: "raw", fitMode: "origin", dataPoints: [{ id: "p", x: -2, y: 3 }] } };
+  const restored = normalizeSnapshot(legacy).ls;
+  assert.equal(restored.datasets.length, 1);
+  assert.equal(restored.datasets[0].fitMode, "origin");
+  assert.deepEqual(restored.datasets[0].dataPoints, legacy.ls.dataPoints);
+  assert.equal(restored.activeDatasetId, restored.datasets[0].id);
+});
+
+test("multiple datasets, visibility, color, uncertainty and report metadata round-trip", () => {
+  const datasets = [createDataset(0), createDataset(1)];
+  datasets[0].dataPoints = [{ id: "p", x: 1, y: 2, dx: 0, dy: 0.2 }];
+  datasets[1].visible = false;
+  datasets[1].fitMode = "origin";
+  const ls = { datasets, activeDatasetId: datasets[1].id, report: { title: "物理実験", xName: "時間", xUnit: "s", yName: "距離", yUnit: "m" } };
+  const restored = normalizeSnapshot(JSON.parse(JSON.stringify({ v: 1, ls }))).ls;
+  assert.deepEqual(restored.datasets, datasets);
+  assert.deepEqual(restored.report, ls.report);
+  assert.equal(restored.activeDatasetId, datasets[1].id);
+  assert.throws(() => normalizeSnapshot({ ls: { dataPoints: [{ x: 1, y: 2, dx: -1 }] } }));
+});
+
+test("error-bar CSV round-trips optional empty cells and rejects negative uncertainty", () => {
+  const parsed = parsePastedPoints("X,Y,DeltaX,DeltaY\n1,2,,0.5\n2,4,0.1,0");
+  assert.deepEqual(parsed.invalidRows, []);
+  assert.deepEqual(parsed.points, [{ x: 1, y: 2, dx: null, dy: 0.5 }, { x: 2, y: 4, dx: 0.1, dy: 0 }]);
+  assert.deepEqual(parsePastedPoints("1,2,-0.1,0.2").invalidRows, [1]);
+});
+
+test("graph ranges include both directions of uncertainties and exclude hidden series", () => {
+  const bounds = plotBounds([{ mode: "raw", visible: true, dataPoints: [{ x: 2, y: 3, dx: 4, dy: 5 }] }, { visible: false, dataPoints: [{ x: 1e10, y: 1e10 }] }]);
+  assert.ok(bounds.x[0] < -2 && bounds.x[1] > 6);
+  assert.ok(bounds.y[0] < -2 && bounds.y[1] > 8);
+  assert.ok(bounds.x[1] < 10);
 });

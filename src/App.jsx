@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState, useContext, useCallback } from "react";
 import { HashRouter, useNavigate, useLocation } from "react-router-dom";
-import { calculateRegression, calculateFromStats, calculateSampleStats, formatNumber, parseNumber, parsePastedPoints, predictY } from "./utils/statistics.js";
+import { calculateSampleStats, formatNumber, parseNumber, parsePastedPoints, calculateDatasets, validUncertainty } from "./utils/statistics.js";
+import { createDataset, defaultReport } from "./utils/datasets.js";
+import ReportOutput, { ReportSettings } from "./components/ReportOutput.jsx";
+import DatasetControls from "./components/DatasetControls.jsx";
+import ScatterPlot from "./components/ScatterPlot.jsx";
+import { resultLatex } from "./utils/latex.js";
 import CalculationProcess from "./components/CalculationProcess.jsx";
 import { normalizeSessions, normalizeSnapshot } from "./utils/session.js";
 import {
@@ -483,9 +488,9 @@ const DetailedDataTable = ({ data, result, onRequestDownload }) => {
   const handleCopy = async () => {
     const header = "No\tX\tY\tX^2\tXY\t(Y-aX-b)^2\n";
     const body = rows
-      .map((r) => `${r.no}\t${r.x}\t${r.y}\t${r.x2}\t${r.xy}\t${r.residualSq !== null ? r.residualSq : ""}`)
+      .map((r) => `${r.no}\t${r.x}\t${r.y}\t${r.x2 ?? ""}\t${r.xy ?? ""}\t${r.residualSq !== null ? r.residualSq : ""}`)
       .join("\n");
-    const footer = `Sum\t${totals.x}\t${totals.y}\t${totals.x2}\t${totals.xy}\t${totals.residualSq !== null ? totals.residualSq : ""}`;
+    const footer = `Sum\t${totals.x ?? ""}\t${totals.y ?? ""}\t${totals.x2 ?? ""}\t${totals.xy ?? ""}\t${totals.residualSq !== null ? totals.residualSq : ""}`;
 
     setCopied(await copyToClipboard(header + body + "\n" + footer));
     setTimeout(() => setCopied(false), 1500);
@@ -494,9 +499,9 @@ const DetailedDataTable = ({ data, result, onRequestDownload }) => {
   const handleDownloadRequest = () => {
     const header = "No,X,Y,X^2,XY,(Y-aX-b)^2\n";
     const body = rows
-      .map((r) => `${r.no},${r.x},${r.y},${r.x2},${r.xy},${r.residualSq !== null ? r.residualSq : ""}`)
+      .map((r) => `${r.no},${r.x},${r.y},${r.x2 ?? ""},${r.xy ?? ""},${r.residualSq !== null ? r.residualSq : ""}`)
       .join("\n");
-    const footer = `Sum,${totals.x},${totals.y},${totals.x2},${totals.xy},${totals.residualSq !== null ? totals.residualSq : ""}`;
+    const footer = `Sum,${totals.x ?? ""},${totals.y ?? ""},${totals.x2 ?? ""},${totals.xy ?? ""},${totals.residualSq !== null ? totals.residualSq : ""}`;
     onRequestDownload(header + body + "\n" + footer, "least_squares_detailed_data.csv");
   };
 
@@ -567,181 +572,28 @@ const DetailedDataTable = ({ data, result, onRequestDownload }) => {
 /* =========================================================
    9) グラフ（簡易SVG）
 ========================================================= */
-const SimpleScatterPlot = ({ data, result, isDarkMode }) => {
-  const [hoveredPoint, setHoveredPoint] = useState(null);
-  const { slope, intercept } = result;
-  if (!data || data.length === 0) return null;
-  const validData = data.filter((d) => Number.isFinite(d.x) && Number.isFinite(d.y));
-  if (validData.length === 0) return null;
-
-  const xValues = validData.map((d) => d.x);
-  const yValues = validData.map((d) => d.y);
-  const minX = xValues.reduce((a, b) => Math.min(a, b), 0);
-  const maxX = xValues.reduce((a, b) => Math.max(a, b), -Infinity);
-  const minY = yValues.reduce((a, b) => Math.min(a, b), 0);
-  const maxY = yValues.reduce((a, b) => Math.max(a, b), -Infinity);
-
-  let xPadding = (maxX - minX) * 0.1;
-  if (xPadding === 0) xPadding = 1;
-  let yPadding = (maxY - minY) * 0.1;
-  if (yPadding === 0) yPadding = 1;
-
-  const domainX = [minX - xPadding, maxX + xPadding];
-  const domainY = [minY - yPadding, maxY + yPadding];
-  if (![...domainX, ...domainY, domainX[1] - domainX[0], domainY[1] - domainY[0]].every(Number.isFinite)) {
-    return <p role="alert" className="text-xs text-red-500">値の範囲が大きすぎるため、グラフを描画できません。</p>;
-  }
-
-  const width = 600;
-  const height = 350;
-  const padding = 50;
-
-  const scaleX = (x) => padding + ((x - domainX[0]) / (domainX[1] - domainX[0])) * (width - 2 * padding);
-  const scaleY = (y) => height - (padding + ((y - domainY[0]) / (domainY[1] - domainY[0])) * (height - 2 * padding));
-
-  const axisColor = isDarkMode ? "#94a3b8" : "#64748b";
-  const gridColor = isDarkMode ? "#334155" : "#e2e8f0";
-  const zeroColor = isDarkMode ? "#cbd5e1" : "#64748b";
-
-  const generateTicks = (min, max) => {
-    const range = max - min;
-    if (range <= 0 || !Number.isFinite(range)) return [min];
-    const magnitude = Math.pow(10, Math.floor(Math.log10(range)));
-    let step = magnitude;
-    if (range / magnitude > 5) step = magnitude;
-    else if (range / magnitude > 2) step = magnitude / 2;
-    else step = magnitude / 5;
-    if (step <= 0 || !Number.isFinite(step)) step = 1;
-
-    const ticks = [];
-    let safeGuard = 0;
-    const startTick = Math.ceil(min / step) * step;
-    for (let i = startTick; i <= max; i += step) {
-      ticks.push(parseFloat(i.toPrecision(10)));
-      safeGuard++;
-      if (safeGuard > 100) break;
-    }
-    return ticks;
-  };
-
-  const xTicks = generateTicks(domainX[0], domainX[1]);
-  const yTicks = generateTicks(domainY[0], domainY[1]);
-
-  let lineCoords = null;
-  if (slope !== null && intercept !== null && Number.isFinite(slope) && Number.isFinite(intercept)) {
-    lineCoords = {
-      x1: scaleX(domainX[0]),
-      y1: scaleY(predictY(domainX[0], result)),
-      x2: scaleX(domainX[1]),
-      y2: scaleY(predictY(domainX[1], result)),
-    };
-  }
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
-      <defs>
-        <clipPath id="chartArea">
-          <rect x={padding} y={padding} width={width - 2 * padding} height={height - 2 * padding} />
-        </clipPath>
-      </defs>
-
-      {xTicks.map((tick) => {
-        const xPos = scaleX(tick);
-        if (!Number.isFinite(xPos) || xPos < padding || xPos > width - padding) return null;
-        return (
-          <g key={`x-${tick}`}>
-            <line x1={xPos} y1={padding} x2={xPos} y2={height - padding} stroke={tick === 0 ? zeroColor : gridColor} strokeWidth={tick === 0 ? 2 : 1} />
-            <text x={xPos} y={height - 25} fontSize="10" fill={axisColor} textAnchor="middle">
-              {safeRound(tick)}
-            </text>
-          </g>
-        );
-      })}
-
-      {yTicks.map((tick) => {
-        const yPos = scaleY(tick);
-        if (!Number.isFinite(yPos) || yPos < padding || yPos > height - padding) return null;
-        return (
-          <g key={`y-${tick}`}>
-            <line x1={padding} y1={yPos} x2={width - padding} y2={yPos} stroke={tick === 0 ? zeroColor : gridColor} strokeWidth={tick === 0 ? 2 : 1} />
-            <text x={padding - 10} y={yPos + 3} fontSize="10" fill={axisColor} textAnchor="end">
-              {safeRound(tick)}
-            </text>
-          </g>
-        );
-      })}
-
-      <rect x={padding} y={padding} width={width - 2 * padding} height={height - 2 * padding} fill="none" stroke={isDarkMode ? "#475569" : "#cbd5e1"} strokeWidth="1" />
-
-      <g clipPath="url(#chartArea)">
-        {lineCoords && Number.isFinite(lineCoords.y1) && Number.isFinite(lineCoords.y2) && (
-          <line x1={lineCoords.x1} y1={lineCoords.y1} x2={lineCoords.x2} y2={lineCoords.y2} stroke="#6366f1" strokeWidth="2" />
-        )}
-
-        {validData.map((p) => (
-          <circle
-            key={p.id}
-            cx={scaleX(p.x)}
-            cy={scaleY(p.y)}
-            r="6"
-            fill="#8b5cf6"
-            fillOpacity="0.8"
-            stroke="white"
-            strokeWidth="2"
-            onMouseEnter={() => setHoveredPoint(p)}
-            onMouseLeave={() => setHoveredPoint(null)}
-            className="cursor-pointer hover:opacity-100 transition-opacity"
-          />
-        ))}
-      </g>
-
-      {hoveredPoint &&
-        (() => {
-          const x = scaleX(hoveredPoint.x);
-          const y = scaleY(hoveredPoint.y);
-          const tooltipText = `(${hoveredPoint.x}, ${hoveredPoint.y})`;
-          const isRight = x > width / 2;
-          const xOffset = isRight ? -10 : 10;
-          const textAnchor = isRight ? "end" : "start";
-          const w = tooltipText.length * 7 + 10;
-
-          return (
-            <g pointerEvents="none">
-              <rect
-                x={isRight ? x - (w + 20) : x + 10}
-                y={y - 25}
-                width={w}
-                height="20"
-                rx="4"
-                fill={isDarkMode ? "#1e293b" : "white"}
-                stroke={isDarkMode ? "#475569" : "#cbd5e1"}
-                strokeWidth="1"
-                fillOpacity="0.9"
-              />
-              <text x={x + xOffset} y={y - 15} fontSize="12" fill={isDarkMode ? "white" : "#1e293b"} alignmentBaseline="middle" textAnchor={textAnchor} fontWeight="bold">
-                {tooltipText}
-              </text>
-            </g>
-          );
-        })()}
-    </svg>
-  );
-};
-
-/* =========================================================
-   10) 最小二乗法ページ
-========================================================= */
 const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const session = useSession();
 
-  const [mode, setMode] = useState("raw");
-
-  const [dataPoints, setDataPoints] = useState([]);
+  const [datasets, setDatasets] = useState(() => [createDataset()]);
+  const [activeDatasetId, setActiveDatasetId] = useState(() => datasets[0].id);
+  const [report, setReport] = useState(defaultReport);
+  const activeDataset = datasets.find(d => d.id === activeDatasetId) || datasets[0];
+  const updateDataset = (id, changes) => setDatasets(previous => previous.map(d => d.id === id ? { ...d, ...changes } : d));
+  const { mode, fitMode, dataPoints, manualStats } = activeDataset;
+  const setMode = value => updateDataset(activeDataset.id, { mode: value });
+  const setFitMode = value => updateDataset(activeDataset.id, { fitMode: value });
+  const setDataPoints = value => updateDataset(activeDataset.id, { dataPoints: value });
+  const setManualStats = updater => updateDataset(activeDataset.id, { manualStats: updater(manualStats) });
+  const [inputDX, setInputDX] = useState("");
+  const [inputDY, setInputDY] = useState("");
+  const [latexCopied, setLatexCopied] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   const [inputX, setInputX] = useState("");
   const [inputY, setInputY] = useState("");
-  const invalidPointInput = [inputX, inputY].some((value) => value !== "" && parseNumber(value) === null);
+  const invalidPointInput = [inputX, inputY].some((value) => value !== "" && parseNumber(value) === null) || !validUncertainty(inputDX) || !validUncertainty(inputDY);
   const [editingId, setEditingId] = useState(null);
 
   const [history, setHistory] = useState([[]]);
@@ -750,7 +602,6 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
   const xInputRef = useRef(null);
   const yInputRef = useRef(null);
 
-  const [manualStats, setManualStats] = useState({ n: "", sumX: "", sumY: "", sumX2: "", sumXY: "", sumResiduals: "" });
 
   // UI
   const [showFormula, setShowFormula] = useState(false);
@@ -797,7 +648,29 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
     }
   };
 
-  const result = useMemo(() => mode === "raw" ? calculateRegression(dataPoints) : calculateFromStats(manualStats), [mode, dataPoints, manualStats]);
+  const series = useMemo(() => calculateDatasets(datasets), [datasets]);
+  const result = series.find(d => d.id === activeDataset.id).result;
+  const selectDataset = (id) => {
+    const dataset = datasets.find(d => d.id === id);
+    if (!dataset) return;
+    setActiveDatasetId(id);
+    setHistory([dataset.dataPoints]);
+    setHistoryIndex(0);
+    handleEditCancel();
+  };
+  const addDataset = () => {
+    const dataset = createDataset(datasets.length);
+    setDatasets(previous => [...previous, dataset]);
+    setActiveDatasetId(dataset.id);
+    setHistory([[]]);
+    setHistoryIndex(0);
+    handleEditCancel();
+  };
+  const deleteDataset = (id) => {
+    if (datasets.length === 1) return;
+    if (id === activeDataset.id) selectDataset(datasets.find(d => d.id !== id).id);
+    setDatasets(previous => previous.filter(d => d.id !== id));
+  };
 
   const handleUpsertPoint = (e) => {
     if (e) e.preventDefault();
@@ -805,25 +678,31 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
 
     const x = parseNumber(inputX);
     const y = parseNumber(inputY);
-    if (x === null || y === null) return;
+    if (x === null || y === null || invalidPointInput) return;
+    const dx = inputDX === "" ? null : parseNumber(inputDX);
+    const dy = inputDY === "" ? null : parseNumber(inputDY);
 
     let newData;
     if (editingId !== null) {
-      newData = dataPoints.map((p) => (p.id === editingId ? { ...p, x, y } : p));
+      newData = dataPoints.map((p) => (p.id === editingId ? { ...p, x, y, dx, dy } : p));
       setEditingId(null);
     } else {
-      newData = [...dataPoints, { id: generateId(), x, y }];
+      newData = [...dataPoints, { id: generateId(), x, y, dx, dy }];
     }
 
     addToHistory(newData);
     setInputX("");
     setInputY("");
+    setInputDX("");
+    setInputDY("");
     xInputRef.current?.focus();
   };
 
   const handleEditStart = (point) => {
     setInputX(String(point.x));
     setInputY(String(point.y));
+    setInputDX(point.dx == null ? "" : String(point.dx));
+    setInputDY(point.dy == null ? "" : String(point.dy));
     setEditingId(point.id);
     xInputRef.current?.focus();
   };
@@ -832,6 +711,8 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
     setInputX("");
     setInputY("");
     setEditingId(null);
+    setInputDX("");
+    setInputDY("");
   };
 
   const handleDeletePoint = (id) => {
@@ -861,13 +742,13 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
 
   const handleExportCSV = () => {
     if (dataPoints.length === 0) return;
-    const csvContent = "X,Y\n" + dataPoints.map((p) => `${p.x},${p.y}`).join("\n");
+    const csvContent = "X,Y,DeltaX,DeltaY\n" + dataPoints.map((p) => `${p.x},${p.y},${p.dx ?? ""},${p.dy ?? ""}`).join("\n");
     handleRequestDownload(csvContent, "least_squares_data.csv");
   };
 
   const handleCopyToClipboard = async () => {
     if (dataPoints.length === 0) return;
-    setCopied(await copyToClipboard("X\tY\n" + dataPoints.map((p) => `${p.x}\t${p.y}`).join("\n")));
+    setCopied(await copyToClipboard("X\tY\tDeltaX\tDeltaY\n" + dataPoints.map((p) => `${p.x}\t${p.y}\t${p.dx ?? ""}\t${p.dy ?? ""}`).join("\n")));
     setTimeout(() => setCopied(false), 1500);
   };
 
@@ -877,25 +758,25 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
   useEffect(() => {
     notifyDirty();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, dataPoints, manualStats, sectionOrder, isDarkMode]);
+  }, [datasets, activeDatasetId, report, sectionOrder, isDarkMode]);
 
   // ========= exporter/importer 登録 =========
   useEffect(() => {
     registerExporter(() => ({
+      datasets, activeDatasetId, report,
       mode,
       dataPoints,
       manualStats,
+      fitMode,
       sectionOrder,
       isDarkMode,
     }));
 
     registerImporter((snap) => {
       if (!snap) return;
-      setMode(snap.mode || "raw");
-      setDataPoints(Array.isArray(snap.dataPoints) ? snap.dataPoints : []);
-      setManualStats(
-        snap.manualStats || { n: "", sumX: "", sumY: "", sumX2: "", sumXY: "", sumResiduals: "" }
-      );
+      setDatasets(snap.datasets);
+      setActiveDatasetId(snap.activeDatasetId);
+      setReport(snap.report || defaultReport());
       setSectionOrder(Array.isArray(snap.sectionOrder) ? snap.sectionOrder : ["regression", "analysis"]);
       setIsDarkMode(!!snap.isDarkMode);
 
@@ -906,9 +787,11 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
       setEditingId(null);
       setInputX("");
       setInputY("");
+      setInputDX("");
+      setInputDY("");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, dataPoints, manualStats, sectionOrder, isDarkMode]);
+  }, [datasets, activeDatasetId, report, sectionOrder, isDarkMode]);
 
   // ========= 共有リンク：現在の状態をコピー =========
   const handleCopyShareLink = async () => {
@@ -935,8 +818,8 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                   {result.slope !== null ? (
                     <>
                       y = <span className="text-indigo-600 dark:text-indigo-400">{safeRound(result.slope)}</span>x{" "}
-                      {result.intercept >= 0 ? "+" : "-"}{" "}
-                      <span className="text-purple-600 dark:text-purple-400">{safeRound(Math.abs(result.intercept))}</span>
+                      {fitMode !== "origin" && <>{result.intercept >= 0 ? "+" : "-"}{" "}
+                      <span className="text-purple-600 dark:text-purple-400">{safeRound(Math.abs(result.intercept))}</span></>}
                     </>
                   ) : (
                     <span className="text-slate-300 dark:text-slate-600">y = ax + b</span>
@@ -958,7 +841,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                   </div>
 
                   <div className="p-5 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-700 flex flex-col items-center">
-                    <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">切片 b</div>
+                    <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">切片 b{fitMode === "origin" ? "（0固定）" : ""}</div>
                     <div className="text-3xl font-mono font-bold text-purple-600 dark:text-purple-400 mb-2">
                       {result.intercept !== null ? safeRound(result.intercept) : "---"}
                     </div>
@@ -1009,17 +892,19 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
             <StatBadge label="ΣY" value={safeRound(stats.sumY)} />
             <StatBadge label="ΣX²" value={safeRound(stats.sumX2)} />
             <StatBadge label="ΣXY" value={safeRound(stats.sumXY)} />
-            <StatBadge label="Σ(Y-aX-b)²" value={result.slope !== null ? safeRound(result.sumResidualsCalc) : "-"} highlight />
+            <StatBadge label={fitMode === "origin" ? "Σ(Y-aX)²" : "Σ(Y-aX-b)²"} value={result.slope !== null ? safeRound(result.sumResidualsCalc) : "-"} highlight />
           </div>
 
+          {result.warningMsg && <p role="status" className="text-xs text-amber-600 mb-3">{result.warningMsg}</p>}
+          <p className="text-xs text-slate-500 mb-3">{fitMode === "origin" ? "非中心化 Ru² = 1 − Q/Σy²" : "中心化 R² = 1 − Q/Σ(y−ȳ)²"}：{safeRound(result.rSquared)} ／ 自由度：{result.slope === null ? "---" : result.df}</p>
           {mode === "raw" && (
             <DetailedDataTable data={dataPoints} result={result} onRequestDownload={handleRequestDownload} />
           )}
 
           <div className="w-full aspect-[16/9] bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-700 relative overflow-hidden flex items-center justify-center">
-            {mode === "raw" && dataPoints.length > 0 ? (
+            {series.some(d => d.visible && d.mode === "raw" && d.dataPoints.length > 0) ? (
               <div className="w-full h-full p-4">
-                <SimpleScatterPlot data={dataPoints} result={result} isDarkMode={isDarkMode} />
+                <ScatterPlot series={series} isDarkMode={isDarkMode} labels={report} format={safeRound} />
               </div>
             ) : (
               <div className="text-slate-300 dark:text-slate-600 flex flex-col items-center gap-2">
@@ -1053,8 +938,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                 // 全削除
                 addToHistory([]);
                 setInputX("");
-                setInputY("");
-                setEditingId(null);
+                handleEditCancel();
               }}
               className="flex items-center gap-1.5 text-sm font-bold text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 px-3 py-2 rounded-lg transition-colors"
             >
@@ -1179,6 +1063,15 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
           </div>
         </div>
 
+        <ReportSettings value={report} onChange={setReport} />
+        <DatasetControls datasets={datasets} activeId={activeDataset.id} onSelect={selectDataset} onAdd={addDataset} onUpdate={updateDataset} onDelete={deleteDataset} />
+        <div className="mb-6 flex flex-wrap gap-3 items-center">
+          <label className="text-sm font-bold">近似方法 <select aria-label="近似方法" value={fitMode} onChange={e => setFitMode(e.target.value)} className="ml-2 rounded-lg border p-2 bg-white dark:bg-slate-800 dark:border-slate-600">
+            <option value="linear">通常 y = ax + b</option><option value="origin">原点固定 y = ax</option>
+          </select></label>
+          <button disabled={result.slope === null} onClick={async () => { setLatexCopied(await copyToClipboard(resultLatex(result, mode, safeRound))); setTimeout(() => setLatexCopied(false), 1500); }} className="px-3 py-2 text-xs font-bold border rounded-lg bg-white dark:bg-slate-800 disabled:opacity-40">{latexCopied ? "LaTeXコピー完了" : "LaTeXコピー"}</button>
+        </div>
+        <button onClick={() => setShowReport(true)} disabled={!series.some(d => d.visible && d.result.slope !== null)} className="mb-5 px-4 py-2 text-sm font-bold bg-indigo-600 text-white rounded-lg disabled:opacity-40">PDF出力</button>
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left */}
           <div className="lg:col-span-5 space-y-6">
@@ -1267,24 +1160,30 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                         )}
                       </div>
                     </div>
+                    <div className="grid grid-cols-2 gap-3 mt-3">
+                      <label className="text-xs text-slate-500">Δx（任意）<input aria-label="Δx" type="number" min="0" step="any" inputMode="decimal" value={inputDX} onChange={e => setInputDX(e.target.value)} className="w-full border rounded-lg p-2 bg-white dark:bg-slate-800 dark:border-slate-600" /></label>
+                      <label className="text-xs text-slate-500">Δy（任意）<input aria-label="Δy" type="number" min="0" step="any" inputMode="decimal" value={inputDY} onChange={e => setInputDY(e.target.value)} className="w-full border rounded-lg p-2 bg-white dark:bg-slate-800 dark:border-slate-600" /></label>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-2">不確かさはエラーバーの表示に使います。回帰に重み付けしません。</p>
                   </form>
-                  {invalidPointInput && <p role="alert" className="text-xs text-red-500">XとYには計算機で表現できる有限の数値を入力してください。</p>}
+                  {invalidPointInput && <p role="alert" className="text-xs text-red-500">X・Yは有限の数値、Δx・Δyは0以上の有限の数値を入力してください。</p>}
 
                   <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-800">
-                    <div className="overflow-y-auto max-h-[300px]">
+                    <div className="overflow-auto max-h-[300px]">
                       <table className="w-full text-sm text-left">
                         <thead className="text-xs text-slate-500 dark:text-slate-400 uppercase bg-slate-50 dark:bg-slate-700 sticky top-0 z-10 border-b border-slate-200 dark:border-slate-600">
                           <tr>
                             <th className="px-4 py-2 w-12 text-center">No.</th>
                             <th className="px-4 py-2 font-mono">X</th>
                             <th className="px-4 py-2 font-mono">Y</th>
+                            <th className="px-2 py-2">Δx</th><th className="px-2 py-2">Δy</th>
                             <th className="px-4 py-2 text-right">Action</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                           {dataPoints.length === 0 ? (
                             <tr>
-                              <td colSpan="4" className="px-4 py-12 text-center text-slate-400 dark:text-slate-500">
+                              <td colSpan="6" className="px-4 py-12 text-center text-slate-400 dark:text-slate-500">
                                 データがありません
                               </td>
                             </tr>
@@ -1294,6 +1193,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                                 <td className="px-4 py-2 text-center text-slate-400 dark:text-slate-500 text-xs">{i + 1}</td>
                                 <td className="px-4 py-2 font-mono dark:text-slate-300">{p.x}</td>
                                 <td className="px-4 py-2 font-mono dark:text-slate-300">{p.y}</td>
+                                <td className="px-2 py-2 font-mono">{p.dx ?? "—"}</td><td className="px-2 py-2 font-mono">{p.dy ?? "—"}</td>
                                 <td className="px-4 py-2 text-right">
                                   <div className="flex justify-end gap-1">
                                     <button onClick={() => handleEditStart(p)} className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 rounded">
@@ -1334,6 +1234,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                   <InputCard label="Yの総和" symbol="ΣY" value={manualStats.sumY} onChange={(v) => handleManualChange("sumY", v)} />
                   <InputCard label="Xの二乗和" symbol="ΣX²" value={manualStats.sumX2} onChange={(v) => handleManualChange("sumX2", v)} />
                   <InputCard label="XとYの積和" symbol="ΣXY" value={manualStats.sumXY} onChange={(v) => handleManualChange("sumXY", v)} />
+                  <InputCard label="Yの二乗和（R²計算用・任意）" symbol="ΣY²" value={manualStats.sumY2} onChange={(v) => handleManualChange("sumY2", v)} />
                   <InputCard label="残差平方和" symbol="Σ(Y-aX-b)²" value={manualStats.sumResiduals} onChange={(v) => handleManualChange("sumResiduals", v)} highlight plClass="pl-28" />
                 </div>
               </div>
@@ -1345,6 +1246,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
         </div>
       </div>
 
+      {showReport && <ReportOutput report={report} series={series} format={safeRound} onClose={() => setShowReport(false)} />}
       {/* Modals */}
       {showRefModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowRefModal(false)}>
@@ -1384,7 +1286,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
             </div>
             <ImportPasteBox
               onImport={(parsed) => {
-                addToHistory([...dataPoints, ...parsed.map((p) => ({ id: generateId(), x: p.x, y: p.y }))]);
+                addToHistory([...dataPoints, ...parsed.map((p) => ({ ...p, id: generateId() }))]);
                 setShowImportModal(false);
               }}
             />
@@ -1426,7 +1328,7 @@ const ImportPasteBox = ({ onImport }) => {
         className="w-full h-40 p-4 border border-slate-200 dark:border-slate-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 dark:bg-slate-800 dark:text-white font-mono text-xs"
         placeholder={`例:\n1.5\t2.3\n2.0\t3.1\n...`}
       />
-      {invalidRows.length > 0 && <p role="alert" className="text-xs text-red-500">{invalidRows.join("、")}行目: XとYの2列に有限の数値を入力してください。空欄や余分な列は取り込めません。</p>}
+      {invalidRows.length > 0 && <p role="alert" className="text-xs text-red-500">{invalidRows.join("、")}行目: X・Yの2列、またはX・Y・Δx・Δyの4列で入力してください。X・Yは必須、不確かさは空欄または0以上の数値です。</p>}
       <div className="flex justify-between items-center text-sm">
         <span className="font-bold text-slate-400">{preview.length}件</span>
         <button
@@ -1995,6 +1897,32 @@ const AppWithBoundary = () => {
     return () => window.removeEventListener("pagehide", saveDraft);
   }, [getCurrentSnapshot, activeSessionName]);
 
+  const importSharedLink = useCallback((encoded) => {
+  const snap = normalizeSnapshot(decodeBase64UrlJson(encoded));
+
+  // 共有リンクを開いたら、そのまま復元（要件）
+  applySnapshot(snap);
+
+  // セッションとしても保存（便利）
+  const baseName = `共有リンク ${fmtDateTime(Date.now())}`;
+  let name = baseName;
+  let suffix = 2;
+  while (Object.hasOwn(sessions, name)) name = `${baseName} (${suffix++})`;
+  setActiveSessionName(name);
+  try {
+    localStorage.setItem(ACTIVE_KEY, name);
+  } catch { /* Storage or URL access can be unavailable. */ }
+
+  setSessions((prev) => {
+    const next = { ...prev, [name]: { updatedAt: Date.now(), snapshot: snap } };
+    safeSaveJson(SESS_KEY, next);
+    return next;
+  });
+
+  // URLからdataを消して二重読み込み回避
+  removeShareParamFromUrl();
+  }, [applySnapshot, sessions]);
+
   // Restore only once: StrictMode repeats effect setup in development.
   const restoredRef = useRef(false);
   useEffect(() => {
@@ -2020,35 +1948,30 @@ const AppWithBoundary = () => {
     }
 
     try {
-      const snap = normalizeSnapshot(decodeBase64UrlJson(s));
-
-      // 共有リンクを開いたら、そのまま復元（要件）
-      applySnapshot(snap);
-
-      // セッションとしても保存（便利）
-      const baseName = `共有リンク ${fmtDateTime(Date.now())}`;
-      let name = baseName;
-      let suffix = 2;
-      while (Object.hasOwn(sessions, name)) name = `${baseName} (${suffix++})`;
-      setActiveSessionName(name);
-      try {
-        localStorage.setItem(ACTIVE_KEY, name);
-      } catch { /* Storage or URL access can be unavailable. */ }
-
-      setSessions((prev) => {
-        const next = { ...prev, [name]: { updatedAt: Date.now(), snapshot: snap } };
-        safeSaveJson(SESS_KEY, next);
-        return next;
-      });
-
-      // URLからdataを消して二重読み込み回避
-      removeShareParamFromUrl();
+      importSharedLink(s);
     } catch {
       restoreStored();
       window.alert("共有リンクのデータを復元できませんでした。リンクが正しいか確認してください。");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fragment-only navigation does not remount the app. Restore pasted links and
+  // history navigation as well as links opened in a fresh tab.
+  useEffect(() => {
+    const restoreFromNavigation = () => {
+      const encoded = getShareParamFromUrl();
+      if (!encoded) return;
+      try { importSharedLink(encoded); }
+      catch { window.alert("共有リンクのデータを復元できませんでした。リンクが正しいか確認してください。"); }
+    };
+    window.addEventListener("hashchange", restoreFromNavigation);
+    window.addEventListener("popstate", restoreFromNavigation);
+    return () => {
+      window.removeEventListener("hashchange", restoreFromNavigation);
+      window.removeEventListener("popstate", restoreFromNavigation);
+    };
+  }, [importSharedLink]);
 
   // セッション操作
   const saveAs = (name) => {
