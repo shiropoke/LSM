@@ -1,11 +1,9 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { calculateSampleStats, formatNumber, parseNumber } from "../utils/statistics.js";
 import { useNavigate } from "react-router-dom";
 import { Calculator, Plus, Trash2, Pencil, Check, X, RotateCcw, ArrowLeft } from "lucide-react";
 
-const safeRound = (num, decimals = 6) => {
-  if (num === null || num === undefined || Number.isNaN(num) || !Number.isFinite(num)) return "---";
-  return +(Math.round(num + "e+" + decimals) + "e-" + decimals);
-};
+const safeRound = (num) => formatNumber(num, "dec", 6);
 
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
 
@@ -29,26 +27,7 @@ export default function StdErrorCalculator() {
   const activeIndex = useMemo(() => tabs.findIndex(t => t.id === activeId), [tabs, activeId]);
   const activeTab = tabs[activeIndex] ?? tabs[0];
 
-  const stats = useMemo(() => {
-    const arr = (activeTab?.values ?? []).map(x => x.v).filter(v => Number.isFinite(v));
-    const n = arr.length;
-    if (n === 0) return { n: 0, mean: null, sd: null, se: null, sum: 0 };
-
-    const sum = arr.reduce((a, b) => a + b, 0);
-    const mean = sum / n;
-
-    // 標本標準偏差（n-1）
-    let sd = null;
-    if (n >= 2) {
-      const ss = arr.reduce((acc, v) => acc + (v - mean) ** 2, 0);
-      sd = Math.sqrt(ss / (n - 1));
-    }
-
-    // 標準誤差（SE = SD / sqrt(n)）: n>=2 のとき計算可能
-    const se = (sd !== null) ? sd / Math.sqrt(n) : null;
-
-    return { n, mean, sd, se, sum };
-  }, [activeTab]);
+  const stats = calculateSampleStats((activeTab?.values ?? []).map((row) => row.v));
 
   const updateActiveTab = (updater) => {
     setTabs(prev => {
@@ -65,8 +44,8 @@ export default function StdErrorCalculator() {
   // - form に noValidate
   // - Enter は submit に依存せず手動追加
   const addValue = () => {
-    const v = parseFloat(inputValue);
-    if (!Number.isFinite(v)) return;
+    const v = parseNumber(inputValue);
+    if (v === null) return;
     updateActiveTab(tab => ({
       ...tab,
       values: [...tab.values, { id: generateId(), v }],
@@ -82,8 +61,8 @@ export default function StdErrorCalculator() {
 
   const commitEdit = () => {
     if (!editing) return;
-    const v = parseFloat(editing.draft);
-    if (!Number.isFinite(v)) return;
+    const v = parseNumber(editing.draft);
+    if (v === null) return;
 
     updateActiveTab(tab => ({
       ...tab,
@@ -107,18 +86,11 @@ export default function StdErrorCalculator() {
   };
 
   const addTab = () => {
-    setTabs(prev => {
-      const next = [...prev, makeNewTab(prev.length + 1)];
-      return next;
-    });
-    // state更新直後に activeId を新タブにしたいので、次tickで
-    setTimeout(() => {
-      setTabs(prev => {
-        const last = prev[prev.length - 1];
-        if (last) setActiveId(last.id);
-        return prev;
-      });
-    }, 0);
+    const tab = makeNewTab(tabs.length + 1);
+    setTabs(prev => [...prev, tab]);
+    setActiveId(tab.id);
+    setInputValue("");
+    setEditing(null);
   };
 
   return (
@@ -212,6 +184,8 @@ export default function StdErrorCalculator() {
           </div>
         </div>
 
+        {stats.errorMsg && <p role="alert" className="text-sm text-red-600">{stats.errorMsg}</p>}
+
         {/* Input + Table */}
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden">
           <div className="p-4 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-700/30 flex items-center justify-between">
@@ -258,7 +232,7 @@ export default function StdErrorCalculator() {
                 <button
                   type="button"
                   onClick={addValue}
-                  disabled={!inputValue || !Number.isFinite(parseFloat(inputValue))}
+                  disabled={!inputValue || !Number.isFinite(parseNumber(inputValue))}
                   className="p-3 bg-indigo-600 text-white rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50"
                   title="追加"
                 >

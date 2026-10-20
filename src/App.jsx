@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState, useContext, useCallback } from "react";
-import { HashRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { HashRouter, useNavigate, useLocation } from "react-router-dom";
+import { calculateRegression, calculateFromStats, calculateSampleStats, formatNumber, parseNumber, parsePastedPoints, predictY } from "./utils/statistics.js";
+import CalculationProcess from "./components/CalculationProcess.jsx";
+import { normalizeSessions, normalizeSnapshot } from "./utils/session.js";
 import {
   Calculator,
   Database,
@@ -45,27 +48,7 @@ const setGlobalNumberFormat = (mode, digits) => {
   GLOBAL_NUMFMT.digits = digits;
 };
 
-const safeRound = (num) => {
-  if (num === null || num === undefined || Number.isNaN(num) || !Number.isFinite(num)) return "---";
-  const { mode, digits } = GLOBAL_NUMFMT;
-  const d = Math.max(1, Math.min(12, parseInt(digits, 10) || 4));
-
-  if (mode === "sig") {
-    // 有効数字
-    const n = Number(num);
-    if (n === 0) return 0;
-    const abs = Math.abs(n);
-    const exp = Math.floor(Math.log10(abs));
-    const factor = Math.pow(10, d - 1 - exp);
-    const rounded = Math.round(n * factor) / factor;
-    return Number(rounded.toPrecision(d));
-  }
-
-  // 小数桁
-  const n = Number(num);
-  const factor = Math.pow(10, d);
-  return Math.round(n * factor) / factor;
-};
+const safeRound = (num) => formatNumber(num, GLOBAL_NUMFMT.mode, GLOBAL_NUMFMT.digits);
 
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 
@@ -96,7 +79,7 @@ const getShareParamFromUrl = () => {
     const url = new URL(window.location.href);
     const s = url.searchParams.get("data");
     if (s) return s;
-  } catch (_) {}
+  } catch { /* Storage or URL access can be unavailable. */ }
 
   // 2) HashRouter の #/path?data=...
   const hash = window.location.hash || "";
@@ -126,26 +109,28 @@ const removeShareParamFromUrl = () => {
     }
 
     window.history.replaceState({}, "", url.toString());
-  } catch (_) {}
+  } catch { /* Storage or URL access can be unavailable. */ }
 };
 
 const copyToClipboard = async (text) => {
   try {
     await navigator.clipboard.writeText(text);
     return true;
-  } catch (_) {
+  } catch {
     // fallback
+    const ta = document.createElement("textarea");
     try {
-      const ta = document.createElement("textarea");
       ta.value = text;
       document.body.appendChild(ta);
       ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-      return true;
-    } catch (_) {
-      return false;
+      if (document.execCommand("copy")) return true;
+    } catch {
+      // Report a failure instead of an unhandled clipboard rejection.
+    } finally {
+      ta.remove();
     }
+    window.alert("コピーできませんでした。ブラウザのクリップボード権限を確認してください。");
+    return false;
   }
 };
 
@@ -160,13 +145,14 @@ const fmtDateTime = (ts) => {
 ========================================================= */
 const SESS_KEY = "lsm_sessions_v1";
 const ACTIVE_KEY = "lsm_active_session_v1";
+const DRAFT_KEY = "lsm_draft_v1";
 
 const safeLoadJson = (key, fallback) => {
   try {
     const s = localStorage.getItem(key);
     if (!s) return fallback;
     return JSON.parse(s);
-  } catch (_) {
+  } catch {
     return fallback;
   }
 };
@@ -175,7 +161,7 @@ const safeSaveJson = (key, value) => {
   try {
     localStorage.setItem(key, JSON.stringify(value));
     return true;
-  } catch (_) {
+  } catch {
     return false;
   }
 };
@@ -487,41 +473,22 @@ const PrecisionModal = ({ onClose }) => {
 /* =========================================================
    8) 詳細データ表（最小二乗）
 ========================================================= */
-const DetailedDataTable = ({ data, slope, intercept, onRequestDownload }) => {
+const DetailedDataTable = ({ data, result, onRequestDownload }) => {
   const [copied, setCopied] = useState(false);
-  if (!data || data.length === 0) return null;
+  if (!data || data.length === 0 || result.rows.length === 0) return null;
 
-  const rows = data.map((p, index) => {
-    const residualSq =
-      slope !== null && intercept !== null ? Math.pow(p.y - (slope * p.x + intercept), 2) : null;
-    return { no: index + 1, x: p.x, y: p.y, x2: p.x * p.x, xy: p.x * p.y, residualSq };
-  });
+  const rows = result.rows;
+  const totals = { x: result.stats.sumX, y: result.stats.sumY, x2: result.stats.sumX2, xy: result.stats.sumXY, residualSq: result.sumResidualsCalc };
 
-  const totals = rows.reduce(
-    (acc, curr) => ({
-      x: acc.x + curr.x,
-      y: acc.y + curr.y,
-      x2: acc.x2 + curr.x2,
-      xy: acc.xy + curr.xy,
-      residualSq:
-        acc.residualSq !== null && curr.residualSq !== null ? acc.residualSq + curr.residualSq : null,
-    }),
-    { x: 0, y: 0, x2: 0, xy: 0, residualSq: 0 }
-  );
-
-  if (slope === null || intercept === null) totals.residualSq = null;
-
-  const handleCopy = () => {
+  const handleCopy = async () => {
     const header = "No\tX\tY\tX^2\tXY\t(Y-aX-b)^2\n";
     const body = rows
       .map((r) => `${r.no}\t${r.x}\t${r.y}\t${r.x2}\t${r.xy}\t${r.residualSq !== null ? r.residualSq : ""}`)
       .join("\n");
     const footer = `Sum\t${totals.x}\t${totals.y}\t${totals.x2}\t${totals.xy}\t${totals.residualSq !== null ? totals.residualSq : ""}`;
 
-    navigator.clipboard.writeText(header + body + "\n" + footer).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    setCopied(await copyToClipboard(header + body + "\n" + footer));
+    setTimeout(() => setCopied(false), 1500);
   };
 
   const handleDownloadRequest = () => {
@@ -600,17 +567,19 @@ const DetailedDataTable = ({ data, slope, intercept, onRequestDownload }) => {
 /* =========================================================
    9) グラフ（簡易SVG）
 ========================================================= */
-const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
+const SimpleScatterPlot = ({ data, result, isDarkMode }) => {
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+  const { slope, intercept } = result;
   if (!data || data.length === 0) return null;
-  const validData = data.filter((d) => !Number.isNaN(d.x) && !Number.isNaN(d.y));
+  const validData = data.filter((d) => Number.isFinite(d.x) && Number.isFinite(d.y));
   if (validData.length === 0) return null;
 
   const xValues = validData.map((d) => d.x);
   const yValues = validData.map((d) => d.y);
-  const minX = Math.min(0, ...xValues);
-  const maxX = Math.max(...xValues);
-  const minY = Math.min(0, ...yValues);
-  const maxY = Math.max(...yValues);
+  const minX = xValues.reduce((a, b) => Math.min(a, b), 0);
+  const maxX = xValues.reduce((a, b) => Math.max(a, b), -Infinity);
+  const minY = yValues.reduce((a, b) => Math.min(a, b), 0);
+  const maxY = yValues.reduce((a, b) => Math.max(a, b), -Infinity);
 
   let xPadding = (maxX - minX) * 0.1;
   if (xPadding === 0) xPadding = 1;
@@ -619,6 +588,9 @@ const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
 
   const domainX = [minX - xPadding, maxX + xPadding];
   const domainY = [minY - yPadding, maxY + yPadding];
+  if (![...domainX, ...domainY, domainX[1] - domainX[0], domainY[1] - domainY[0]].every(Number.isFinite)) {
+    return <p role="alert" className="text-xs text-red-500">値の範囲が大きすぎるため、グラフを描画できません。</p>;
+  }
 
   const width = 600;
   const height = 350;
@@ -659,13 +631,11 @@ const SimpleScatterPlot = ({ data, slope, intercept, isDarkMode }) => {
   if (slope !== null && intercept !== null && Number.isFinite(slope) && Number.isFinite(intercept)) {
     lineCoords = {
       x1: scaleX(domainX[0]),
-      y1: scaleY(slope * domainX[0] + intercept),
+      y1: scaleY(predictY(domainX[0], result)),
       x2: scaleX(domainX[1]),
-      y2: scaleY(slope * domainX[1] + intercept),
+      y2: scaleY(predictY(domainX[1], result)),
     };
   }
-
-  const [hoveredPoint, setHoveredPoint] = useState(null);
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
@@ -771,6 +741,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
   const [dataPoints, setDataPoints] = useState([]);
   const [inputX, setInputX] = useState("");
   const [inputY, setInputY] = useState("");
+  const invalidPointInput = [inputX, inputY].some((value) => value !== "" && parseNumber(value) === null);
   const [editingId, setEditingId] = useState(null);
 
   const [history, setHistory] = useState([[]]);
@@ -780,9 +751,6 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
   const yInputRef = useRef(null);
 
   const [manualStats, setManualStats] = useState({ n: "", sumX: "", sumY: "", sumX2: "", sumXY: "", sumResiduals: "" });
-  const [rawStats, setRawStats] = useState({ n: 0, sumX: 0, sumY: 0, sumX2: 0, sumXY: 0, sumResiduals: 0 });
-
-  const [result, setResult] = useState({ slope: null, intercept: null, stdErrA: null, stdErrB: null, errorMsg: "", sumResidualsCalc: 0 });
 
   // UI
   const [showFormula, setShowFormula] = useState(false);
@@ -816,93 +784,28 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
 
   const handleUndo = () => {
     if (historyIndex > 0) {
+      handleEditCancel();
       setHistoryIndex(historyIndex - 1);
       setDataPoints(history[historyIndex - 1]);
     }
   };
   const handleRedo = () => {
     if (historyIndex < history.length - 1) {
+      handleEditCancel();
       setHistoryIndex(historyIndex + 1);
       setDataPoints(history[historyIndex + 1]);
     }
   };
 
-  const calculateLeastSquares = (n, sX, sY, sX2, sXY, sResManual = null) => {
-    const numN = parseFloat(n);
-    const numSX = parseFloat(sX);
-    const numSY = parseFloat(sY);
-    const numSX2 = parseFloat(sX2);
-    const numSXY = parseFloat(sXY);
-
-    if (!numN || numN === 0 || Number.isNaN(numN)) return { slope: null, intercept: null, stdErrA: null, stdErrB: null, errorMsg: "" };
-
-    const denominator = numN * numSX2 - numSX * numSX;
-    if (denominator === 0 || Number.isNaN(denominator)) return { slope: null, intercept: null, stdErrA: null, stdErrB: null, errorMsg: "分母が0です（Xの分散が0）" };
-
-    const a = (numN * numSXY - numSX * numSY) / denominator;
-    const b = (numSX2 * numSY - numSXY * numSX) / denominator;
-
-    let sRes = 0;
-    if (mode === "raw") sRes = dataPoints.reduce((acc, p) => acc + Math.pow(p.y - (a * p.x + b), 2), 0);
-    else sRes = sResManual !== null && sResManual !== "" ? parseFloat(sResManual) : 0;
-
-    let seA = null,
-      seB = null;
-    if (numN > 2) {
-      const Ve = sRes / (numN - 2);
-      const Sxx = denominator / numN;
-      if (Sxx > 0 && Ve >= 0) {
-        seA = Math.sqrt(Ve / Sxx);
-        seB = Math.sqrt((Ve * numSX2) / (numN * Sxx));
-      }
-    }
-
-    return { slope: a, intercept: b, stdErrA: seA, stdErrB: seB, sumResidualsCalc: sRes, errorMsg: "" };
-  };
-
-  useEffect(() => {
-    if (mode !== "raw") return;
-    const n = dataPoints.length;
-    if (n === 0) {
-      setRawStats({ n: 0, sumX: 0, sumY: 0, sumX2: 0, sumXY: 0, sumResiduals: 0 });
-      setResult({ slope: null, intercept: null, stdErrA: null, stdErrB: null, errorMsg: "", sumResidualsCalc: 0 });
-      return;
-    }
-    let sX = 0,
-      sY = 0,
-      sX2 = 0,
-      sXY = 0;
-    dataPoints.forEach((p) => {
-      sX += p.x;
-      sY += p.y;
-      sX2 += p.x * p.x;
-      sXY += p.x * p.y;
-    });
-    const calcRes = calculateLeastSquares(n, sX, sY, sX2, sXY);
-    setRawStats({ n, sumX: sX, sumY: sY, sumX2: sX2, sumXY: sXY, sumResiduals: calcRes.sumResidualsCalc });
-    setResult(calcRes);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataPoints, mode]);
-
-  useEffect(() => {
-    if (mode !== "stats") return;
-    const { n, sumX, sumY, sumX2, sumXY, sumResiduals } = manualStats;
-    if (n === "" || sumX === "" || sumY === "" || sumX2 === "" || sumXY === "") {
-      setResult({ slope: null, intercept: null, stdErrA: null, stdErrB: null, errorMsg: "", sumResidualsCalc: 0 });
-      return;
-    }
-    const calcRes = calculateLeastSquares(n, sumX, sumY, sumX2, sumXY, sumResiduals);
-    setResult(calcRes);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manualStats, mode]);
+  const result = useMemo(() => mode === "raw" ? calculateRegression(dataPoints) : calculateFromStats(manualStats), [mode, dataPoints, manualStats]);
 
   const handleUpsertPoint = (e) => {
     if (e) e.preventDefault();
     if (inputX === "" || inputY === "") return;
 
-    const x = parseFloat(inputX);
-    const y = parseFloat(inputY);
-    if (Number.isNaN(x) || Number.isNaN(y)) return;
+    const x = parseNumber(inputX);
+    const y = parseNumber(inputY);
+    if (x === null || y === null) return;
 
     let newData;
     if (editingId !== null) {
@@ -946,11 +849,13 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
   const executeDownload = () => {
     const { content, fileName } = downloadConfig;
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8;" }));
+    const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8;" }));
+    link.href = url;
     link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     setShowDownloadConfirmModal(false);
   };
 
@@ -960,27 +865,13 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
     handleRequestDownload(csvContent, "least_squares_data.csv");
   };
 
-  const handleCopyToClipboard = () => {
+  const handleCopyToClipboard = async () => {
     if (dataPoints.length === 0) return;
-    navigator.clipboard
-      .writeText("X\tY\n" + dataPoints.map((p) => `${p.x}\t${p.y}`).join("\n"))
-      .then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      });
+    setCopied(await copyToClipboard("X\tY\n" + dataPoints.map((p) => `${p.x}\t${p.y}`).join("\n")));
+    setTimeout(() => setCopied(false), 1500);
   };
 
-  const getStats = () =>
-    mode === "raw"
-      ? rawStats
-      : {
-          n: parseFloat(manualStats.n) || 0,
-          sumX: parseFloat(manualStats.sumX) || 0,
-          sumY: parseFloat(manualStats.sumY) || 0,
-          sumX2: parseFloat(manualStats.sumX2) || 0,
-          sumXY: parseFloat(manualStats.sumXY) || 0,
-          sumResiduals: parseFloat(manualStats.sumResiduals) || 0,
-        };
+  const getStats = () => result.stats;
 
   // ========= autosave 対象が変わったら通知 =========
   useEffect(() => {
@@ -1058,7 +949,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                     <div className="text-3xl font-mono font-bold text-indigo-600 dark:text-indigo-400 mb-2">
                       {result.slope !== null ? safeRound(result.slope) : "---"}
                     </div>
-                    {result.stdErrA && (
+                    {result.stdErrA !== null && (
                       <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-600 shadow-sm">
                         <span className="text-xs font-bold bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-400">誤差</span>
                         <span className="text-base font-mono font-medium">± {safeRound(result.stdErrA)}</span>
@@ -1071,7 +962,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                     <div className="text-3xl font-mono font-bold text-purple-600 dark:text-purple-400 mb-2">
                       {result.intercept !== null ? safeRound(result.intercept) : "---"}
                     </div>
-                    {result.stdErrB && (
+                    {result.stdErrB !== null && (
                       <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-600 shadow-sm">
                         <span className="text-xs font-bold bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-400">誤差</span>
                         <span className="text-base font-mono font-medium">± {safeRound(result.stdErrB)}</span>
@@ -1095,9 +986,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
 
               {showFormula && (
                 <div className="bg-slate-900 dark:bg-black text-slate-300 p-6 animate-fade-in border-t border-slate-800">
-                  <div className="text-xs text-slate-400">
-                    （ここは簡略表示です。必要なら途中式表示を拡張できます）
-                  </div>
+                  <CalculationProcess result={result} mode={mode} format={safeRound} />
                 </div>
               )}
             </div>
@@ -1115,27 +1004,27 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
           </h3>
 
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-6">
-            <StatBadge label="n" value={stats.n} />
+            <StatBadge label="n" value={stats.n ?? "---"} />
             <StatBadge label="ΣX" value={safeRound(stats.sumX)} />
             <StatBadge label="ΣY" value={safeRound(stats.sumY)} />
             <StatBadge label="ΣX²" value={safeRound(stats.sumX2)} />
             <StatBadge label="ΣXY" value={safeRound(stats.sumXY)} />
-            <StatBadge label="Σ(Y-aX-b)²" value={result.slope ? safeRound(stats.sumResiduals) : "-"} highlight />
+            <StatBadge label="Σ(Y-aX-b)²" value={result.slope !== null ? safeRound(result.sumResidualsCalc) : "-"} highlight />
           </div>
 
           {mode === "raw" && (
-            <DetailedDataTable data={dataPoints} slope={result.slope} intercept={result.intercept} onRequestDownload={handleRequestDownload} />
+            <DetailedDataTable data={dataPoints} result={result} onRequestDownload={handleRequestDownload} />
           )}
 
           <div className="w-full aspect-[16/9] bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-700 relative overflow-hidden flex items-center justify-center">
-            {dataPoints.length > 0 ? (
+            {mode === "raw" && dataPoints.length > 0 ? (
               <div className="w-full h-full p-4">
-                <SimpleScatterPlot data={dataPoints} slope={result.slope} intercept={result.intercept} isDarkMode={isDarkMode} />
+                <SimpleScatterPlot data={dataPoints} result={result} isDarkMode={isDarkMode} />
               </div>
             ) : (
               <div className="text-slate-300 dark:text-slate-600 flex flex-col items-center gap-2">
                 <LineChart className="w-10 h-10" />
-                <span className="text-sm">データを入力するとグラフが表示されます</span>
+                <span className="text-sm">{mode === "raw" ? "データを入力するとグラフが表示されます" : "総和入力では各点のグラフは作成できません"}</span>
               </div>
             )}
           </div>
@@ -1372,13 +1261,14 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                             </button>
                           </div>
                         ) : (
-                          <button type="submit" disabled={!inputX || !inputY} className="p-3 bg-indigo-600 text-white rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50">
+                          <button type="submit" disabled={!inputX || !inputY || invalidPointInput} className="p-3 bg-indigo-600 text-white rounded-lg shadow-md hover:bg-indigo-700 disabled:opacity-50">
                             <Plus className="w-5 h-5" />
                           </button>
                         )}
                       </div>
                     </div>
                   </form>
+                  {invalidPointInput && <p role="alert" className="text-xs text-red-500">XとYには計算機で表現できる有限の数値を入力してください。</p>}
 
                   <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-800">
                     <div className="overflow-y-auto max-h-[300px]">
@@ -1526,25 +1416,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
 /* ====== Import helper ====== */
 const ImportPasteBox = ({ onImport }) => {
   const [text, setText] = useState("");
-  const [preview, setPreview] = useState([]);
-
-  useEffect(() => {
-    if (!text.trim()) {
-      setPreview([]);
-      return;
-    }
-    const lines = text.trim().split(/\r?\n/);
-    const parsed = [];
-    for (const line of lines) {
-      const parts = line.split(/[,\t\s]+/).filter((s) => s !== "");
-      if (parts.length >= 2) {
-        const x = parseFloat(parts[0]);
-        const y = parseFloat(parts[1]);
-        if (!Number.isNaN(x) && !Number.isNaN(y)) parsed.push({ x, y });
-      }
-    }
-    setPreview(parsed);
-  }, [text]);
+  const { points: preview, invalidRows } = useMemo(() => parsePastedPoints(text), [text]);
 
   return (
     <div className="p-5 space-y-4">
@@ -1554,11 +1426,12 @@ const ImportPasteBox = ({ onImport }) => {
         className="w-full h-40 p-4 border border-slate-200 dark:border-slate-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 dark:bg-slate-800 dark:text-white font-mono text-xs"
         placeholder={`例:\n1.5\t2.3\n2.0\t3.1\n...`}
       />
+      {invalidRows.length > 0 && <p role="alert" className="text-xs text-red-500">{invalidRows.join("、")}行目: XとYの2列に有限の数値を入力してください。空欄や余分な列は取り込めません。</p>}
       <div className="flex justify-between items-center text-sm">
         <span className="font-bold text-slate-400">{preview.length}件</span>
         <button
           onClick={() => onImport(preview)}
-          disabled={preview.length === 0}
+          disabled={preview.length === 0 || invalidRows.length > 0}
           className="bg-indigo-600 text-white px-6 py-2.5 rounded-lg hover:bg-indigo-700 font-bold shadow-md disabled:opacity-50"
         >
           インポート
@@ -1676,6 +1549,7 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
   const [activeDatasetId, setActiveDatasetId] = useState(() => (datasets[0] ? datasets[0].id : null));
 
   const [inputVal, setInputVal] = useState("");
+  const invalidSampleInput = inputVal !== "" && parseNumber(inputVal) === null;
   const inputRef = useRef(null);
 
   // 編集
@@ -1706,8 +1580,8 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
 
   const addValue = (e) => {
     if (e) e.preventDefault();
-    const v = parseFloat(inputVal);
-    if (inputVal === "" || Number.isNaN(v)) return;
+    const v = parseNumber(inputVal);
+    if (v === null) return;
 
     setActiveValues((vals) => [...vals, { id: generateId(), v }]);
     setInputVal("");
@@ -1716,7 +1590,10 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
-  const deleteValue = (id) => setActiveValues((vals) => vals.filter((x) => x.id !== id));
+  const deleteValue = (id) => {
+    if (id === editingValueId) cancelEdit();
+    setActiveValues((vals) => vals.filter((x) => x.id !== id));
+  };
 
   const startEdit = (row) => {
     setEditingValueId(row.id);
@@ -1729,8 +1606,8 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
   };
 
   const saveEdit = () => {
-    const v = parseFloat(editStr);
-    if (Number.isNaN(v)) return;
+    const v = parseNumber(editStr);
+    if (v === null) return;
     setActiveValues((vals) => vals.map((x) => (x.id === editingValueId ? { ...x, v } : x)));
     cancelEdit();
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -1743,30 +1620,9 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
     requestAnimationFrame(() => inputRef.current?.focus());
   };
 
-  const addDataset = () => {
-    setDatasets((prev) => {
-      const nextIndex = prev.length + 1;
-      const nd = { id: generateId(), name: `値を入力 ${nextIndex}`, values: [] };
-      return [...prev, nd];
-    });
-    requestAnimationFrame(() => {
-      // active は後で effect せずにここで切替
-      setTimeout(() => {
-        setActiveDatasetId((_) => {
-          const last = datasets[datasets.length - 1];
-          return last ? last.id : activeDatasetId;
-        });
-      }, 0);
-    });
-  };
-
-  // 計算
+  // Both standard-error screens use the same stable sample statistics.
   const values = active?.values || [];
-  const n = values.length;
-  const sum = values.reduce((acc, x) => acc + x.v, 0);
-  const mean = n > 0 ? sum / n : null;
-  const s = n >= 2 ? Math.sqrt(values.reduce((acc, x) => acc + Math.pow(x.v - mean, 2), 0) / (n - 1)) : null;
-  const se = n >= 2 && s !== null ? s / Math.sqrt(n) : null;
+  const { n, mean, sd: s, se, errorMsg: statsError } = calculateSampleStats(values.map((x) => x.v));
 
   // autosave notify
   useEffect(() => {
@@ -1877,7 +1733,7 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
               {datasets.map((d) => (
                 <button
                   key={d.id}
-                  onClick={() => setActiveDatasetId(d.id)}
+                  onClick={() => { setActiveDatasetId(d.id); setInputVal(""); cancelEdit(); }}
                   className={`px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
                     d.id === activeDatasetId ? "bg-indigo-600 text-white shadow" : "text-slate-500 hover:bg-slate-50"
                   }`}
@@ -1894,6 +1750,8 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
               const nd = { id: generateId(), name: `値を入力 ${nextIndex}`, values: [] };
               setDatasets((prev) => [...prev, nd]);
               setActiveDatasetId(nd.id);
+              setInputVal("");
+              cancelEdit();
               requestAnimationFrame(() => inputRef.current?.focus());
             }}
             className="p-3 rounded-xl bg-indigo-600 text-white font-bold shadow hover:bg-indigo-700 flex items-center justify-center"
@@ -1919,7 +1777,7 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
               />
               <button
                 type="submit"
-                disabled={!inputVal}
+                disabled={!inputVal || invalidSampleInput}
                 onPointerDown={(e) => {
                   // ボタン押下でフォーカスが奪われにくくする（スマホのキーボード対策）
                   e.preventDefault();
@@ -1934,6 +1792,7 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
                 追加
               </button>
             </form>
+            {invalidSampleInput && <p role="alert" className="mt-2 text-xs text-red-600">計算機で表現できる有限の数値を入力してください。</p>}
 
             <div className="mt-4 border border-slate-200 rounded-xl overflow-hidden">
               <div className="max-h-[320px] overflow-y-auto">
@@ -2024,6 +1883,7 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
               <div className="mt-4 p-4 rounded-xl border border-indigo-100 bg-indigo-50">
                 <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">標準誤差 SE = s / √n</div>
                 <div className="font-mono text-2xl font-bold text-indigo-700">{se !== null ? safeRound(se) : "---"}</div>
+                {statsError && <p role="alert" className="text-xs text-red-600">{statsError}</p>}
                 {n < 2 && <div className="text-xs text-slate-500 mt-1">n ≥ 2 のとき計算できます。</div>}
               </div>
             </div>
@@ -2044,6 +1904,20 @@ const StandardErrorCalculator = ({ registerExporter, registerImporter, notifyDir
 /* =========================================================
    12) ルータ上位：セッション保存 + 共有リンク読込（自動復元）
 ========================================================= */
+// Keep both calculators mounted so navigation preserves their state and both
+// snapshot importers are available when a session or shared link is restored.
+const CalculatorPages = ({ notifyDirty, registerLsExporter, registerLsImporter, registerSeExporter, registerSeImporter }) => {
+  const { pathname } = useLocation();
+  return <>
+    <div hidden={pathname !== "/"}>
+      <LeastSquaresErrorCalc notifyDirty={notifyDirty} registerExporter={registerLsExporter} registerImporter={registerLsImporter} />
+    </div>
+    <div hidden={pathname !== "/stderr"}>
+      <StandardErrorCalculator notifyDirty={notifyDirty} registerExporter={registerSeExporter} registerImporter={registerSeImporter} />
+    </div>
+  </>;
+};
+
 const AppWithBoundary = () => {
   // 表示桁（共通）
   const [numberFormatMode, setNumberFormatMode] = useState(() => safeLoadJson("lsm_numfmt_mode_v1", "dec"));
@@ -2060,11 +1934,11 @@ const AppWithBoundary = () => {
   }, [numberFormatMode, numberFormatDigits]);
 
   // セッションストア
-  const [sessions, setSessions] = useState(() => safeLoadJson(SESS_KEY, {}));
+  const [sessions, setSessions] = useState(() => normalizeSessions(safeLoadJson(SESS_KEY, {})));
   const [activeSessionName, setActiveSessionName] = useState(() => {
     try {
       return localStorage.getItem(ACTIVE_KEY) || "";
-    } catch (_) {
+    } catch {
       return "";
     }
   });
@@ -2072,8 +1946,8 @@ const AppWithBoundary = () => {
   // LS/SE の exporter/importer を受け取る
   const lsExporterRef = useRef(() => ({}));
   const seExporterRef = useRef(() => ({}));
-  const lsImporterRef = useRef((_) => {});
-  const seImporterRef = useRef((_) => {});
+  const lsImporterRef = useRef(() => {});
+  const seImporterRef = useRef(() => {});
 
   const [dirtyTick, setDirtyTick] = useState(0);
   const notifyDirty = useCallback(() => setDirtyTick((t) => t + 1), []);
@@ -2088,8 +1962,8 @@ const AppWithBoundary = () => {
     };
   }, [numberFormatMode, numberFormatDigits]);
 
-  const applySnapshot = useCallback((snapshot) => {
-    if (!snapshot) return;
+  const applySnapshot = useCallback((input) => {
+    const snapshot = normalizeSnapshot(input);
     if (snapshot.fmt) {
       if (snapshot.fmt.mode) setNumberFormatMode(snapshot.fmt.mode);
       if (snapshot.fmt.digits !== undefined) setNumberFormatDigits(snapshot.fmt.digits);
@@ -2100,10 +1974,10 @@ const AppWithBoundary = () => {
 
   // autosave（アクティブセッションにデバウンス保存）
   useEffect(() => {
-    if (!activeSessionName) return;
-
     const t = setTimeout(() => {
       const snap = getCurrentSnapshot();
+      safeSaveJson(DRAFT_KEY, { ...snap, activeSessionName });
+      if (!activeSessionName) return;
       setSessions((prev) => {
         const next = { ...prev, [activeSessionName]: { updatedAt: Date.now(), snapshot: snap } };
         safeSaveJson(SESS_KEY, next);
@@ -2114,23 +1988,52 @@ const AppWithBoundary = () => {
     return () => clearTimeout(t);
   }, [dirtyTick, activeSessionName, getCurrentSnapshot]);
 
-  // 共有リンクから自動復元（初回のみ）
+  // Save the latest registered state even when the page closes before debounce.
   useEffect(() => {
+    const saveDraft = () => safeSaveJson(DRAFT_KEY, { ...getCurrentSnapshot(), activeSessionName });
+    window.addEventListener("pagehide", saveDraft);
+    return () => window.removeEventListener("pagehide", saveDraft);
+  }, [getCurrentSnapshot, activeSessionName]);
+
+  // Restore only once: StrictMode repeats effect setup in development.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
     const s = getShareParamFromUrl();
-    if (!s) return;
+    const restoreStored = () => {
+      const draft = safeLoadJson(DRAFT_KEY, null);
+      const saved = sessions[activeSessionName];
+      const useDraft = draft && (draft.activeSessionName ?? "") === activeSessionName && (!saved || draft.updatedAt >= saved.updatedAt);
+      const snapshot = useDraft ? draft : saved?.snapshot;
+      if (snapshot) {
+        try { applySnapshot(snapshot); }
+        catch {
+          if (useDraft && saved?.snapshot) applySnapshot(saved.snapshot);
+          else window.alert("保存データを復元できませんでした。データ形式を確認してください。");
+        }
+      }
+    };
+    if (!s) {
+      restoreStored();
+      return;
+    }
 
     try {
-      const snap = decodeBase64UrlJson(s);
+      const snap = normalizeSnapshot(decodeBase64UrlJson(s));
 
       // 共有リンクを開いたら、そのまま復元（要件）
       applySnapshot(snap);
 
       // セッションとしても保存（便利）
-      const name = `共有リンク ${fmtDateTime(Date.now())}`;
+      const baseName = `共有リンク ${fmtDateTime(Date.now())}`;
+      let name = baseName;
+      let suffix = 2;
+      while (Object.hasOwn(sessions, name)) name = `${baseName} (${suffix++})`;
       setActiveSessionName(name);
       try {
         localStorage.setItem(ACTIVE_KEY, name);
-      } catch (_) {}
+      } catch { /* Storage or URL access can be unavailable. */ }
 
       setSessions((prev) => {
         const next = { ...prev, [name]: { updatedAt: Date.now(), snapshot: snap } };
@@ -2140,8 +2043,9 @@ const AppWithBoundary = () => {
 
       // URLからdataを消して二重読み込み回避
       removeShareParamFromUrl();
-    } catch (_) {
-      // decode失敗は何もしない
+    } catch {
+      restoreStored();
+      window.alert("共有リンクのデータを復元できませんでした。リンクが正しいか確認してください。");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2155,7 +2059,7 @@ const AppWithBoundary = () => {
     setActiveSessionName(n);
     try {
       localStorage.setItem(ACTIVE_KEY, n);
-    } catch (_) {}
+    } catch { /* Storage or URL access can be unavailable. */ }
 
     setSessions((prev) => {
       const next = { ...prev, [n]: { updatedAt: Date.now(), snapshot: snap } };
@@ -2168,11 +2072,12 @@ const AppWithBoundary = () => {
     const it = sessions[name];
     if (!it?.snapshot) return;
 
-    applySnapshot(it.snapshot);
+    try { applySnapshot(it.snapshot); }
+    catch { window.alert("セッションのデータが不正なため復元できません。"); return; }
     setActiveSessionName(name);
     try {
       localStorage.setItem(ACTIVE_KEY, name);
-    } catch (_) {}
+    } catch { /* Storage or URL access can be unavailable. */ }
   };
 
   const deleteSession = (name) => {
@@ -2187,7 +2092,7 @@ const AppWithBoundary = () => {
       setActiveSessionName("");
       try {
         localStorage.removeItem(ACTIVE_KEY);
-      } catch (_) {}
+      } catch { /* Storage or URL access can be unavailable. */ }
     }
   };
 
@@ -2221,28 +2126,13 @@ const AppWithBoundary = () => {
     <ErrorBoundary>
       <SessionContext.Provider value={sessionCtxValue}>
         <HashRouter>
-          <Routes>
-            <Route
-              path="/"
-              element={
-                <LeastSquaresErrorCalc
-                  notifyDirty={notifyDirty}
-                  registerExporter={(fn) => (lsExporterRef.current = fn)}
-                  registerImporter={(fn) => (lsImporterRef.current = fn)}
-                />
-              }
-            />
-            <Route
-              path="/stderr"
-              element={
-                <StandardErrorCalculator
-                  notifyDirty={notifyDirty}
-                  registerExporter={(fn) => (seExporterRef.current = fn)}
-                  registerImporter={(fn) => (seImporterRef.current = fn)}
-                />
-              }
-            />
-          </Routes>
+          <CalculatorPages
+            notifyDirty={notifyDirty}
+            registerLsExporter={(fn) => (lsExporterRef.current = fn)}
+            registerLsImporter={(fn) => (lsImporterRef.current = fn)}
+            registerSeExporter={(fn) => (seExporterRef.current = fn)}
+            registerSeImporter={(fn) => (seImporterRef.current = fn)}
+          />
         </HashRouter>
       </SessionContext.Provider>
     </ErrorBoundary>
