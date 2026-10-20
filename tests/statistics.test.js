@@ -254,17 +254,28 @@ test("legacy single-dataset snapshots migrate without losing mode, fit or measur
   assert.equal(restored.activeDatasetId, restored.datasets[0].id);
 });
 
-test("multiple datasets, visibility, color, uncertainty and report metadata round-trip", () => {
+test("multiple datasets, visibility, color, uncertainty and axis labels round-trip", () => {
   const datasets = [createDataset(0), createDataset(1)];
   datasets[0].dataPoints = [{ id: "p", x: 1, y: 2, dx: 0, dy: 0.2 }];
   datasets[1].visible = false;
   datasets[1].fitMode = "origin";
-  const ls = { datasets, activeDatasetId: datasets[1].id, report: { title: "物理実験", xName: "時間", xUnit: "s", yName: "距離", yUnit: "m" } };
+  const ls = { datasets, activeDatasetId: datasets[1].id, axisLabels: { xName: "時間", xUnit: "s", yName: "距離", yUnit: "m" } };
   const restored = normalizeSnapshot(JSON.parse(JSON.stringify({ v: 1, ls }))).ls;
   assert.deepEqual(restored.datasets, datasets);
-  assert.deepEqual(restored.report, ls.report);
+  assert.deepEqual(restored.axisLabels, ls.axisLabels);
   assert.equal(restored.activeDatasetId, datasets[1].id);
   assert.throws(() => normalizeSnapshot({ ls: { dataPoints: [{ x: 1, y: 2, dx: -1 }] } }));
+});
+
+test("legacy report settings retain only graph axis labels", () => {
+  const report = { title: "物理実験", xName: "時間", xUnit: "s", yName: "距離", yUnit: "m" };
+  const restored = normalizeSnapshot({ ls: { report } }).ls;
+  assert.deepEqual(restored.axisLabels, { xName: "時間", xUnit: "s", yName: "距離", yUnit: "m" });
+  assert.equal(Object.hasOwn(restored, "report"), false);
+  assert.equal(Object.hasOwn(restored.axisLabels, "title"), false);
+  const axisLabels = { xName: "電流", xUnit: "A", yName: "電圧", yUnit: "V" };
+  assert.deepEqual(normalizeSnapshot({ ls: { report, axisLabels } }).ls.axisLabels, axisLabels);
+  assert.deepEqual(normalizeSnapshot({ ls: {} }).ls.axisLabels, { xName: "X", xUnit: "", yName: "Y", yUnit: "" });
 });
 
 test("error-bar CSV round-trips optional empty cells and rejects negative uncertainty", () => {

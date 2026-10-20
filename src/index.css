@@ -5,32 +5,3 @@
 .math-block { margin: .65em 0; padding: .2em 0; overflow-x: auto; line-height: 2; }
 .math-block .katex { font-size: 1.05em; }
 .math-fallback { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
-#lsm-report-root { position: fixed; inset: 0; z-index: 100; overflow: auto; background: #e5e7eb; color: #111; font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif; }
-.report-actions { position: sticky; top: 0; z-index: 2; background: white; border-bottom: 1px solid #ccc; padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; font-size: 12px; }
-.report-actions > div { flex: 1; min-width: 200px; }
-.report-actions button { border: 1px solid #888; border-radius: 6px; padding: 8px 12px; background: white; }
-.report-document { box-sizing: border-box; width: 210mm; max-width: 100%; margin: 16px auto; padding: 18mm; background: white; font-size: 10pt; line-height: 1.7; overflow-wrap: anywhere; }
-.report-document h1 { font-size: 18pt; margin: 0 0 6mm; font-weight: bold; }
-.report-document h2 { font-size: 13pt; font-weight: bold; margin: 7mm 0 3mm; border-bottom: 1px solid #aaa; }
-.report-document h3, .report-document h4 { font-size: 10pt; font-weight: bold; margin: 4mm 0 2mm; }
-.report-document p { margin: 2mm 0; }
-.report-document table { width: 100%; border-collapse: collapse; margin: 3mm 0; font-size: 8pt; }
-.report-document th, .report-document td { border-bottom: 1px solid #ccc; padding: 1.5mm 1mm; text-align: right; }
-.report-document th { font-weight: bold; border-top: 1px solid #888; }
-.report-document .text-indigo-300, .report-document .text-slate-400 { color: #333; }
-.report-document .math-block { font-size: 9pt; padding: 1mm 0; }
-.report-document .report-step { margin-top: 4mm; }
-@page { size: A4; margin: 18mm; }
-@media print {
-  html, body { margin: 0 !important; padding: 0 !important; background: white !important; color: #111 !important; }
-  body:has(#lsm-report-root) > :not(#lsm-report-root) { display: none !important; }
-  #lsm-report-root { position: static; overflow: visible; background: white; }
-  .report-actions { display: none !important; }
-  .report-document { width: auto; max-width: none; margin: 0; padding: 0; }
-  .report-document h1, .report-document h2, .report-document h3, .report-document h4 { break-after: avoid; }
-  .report-document tr, .report-document .math-block, .report-chart { break-inside: avoid; page-break-inside: avoid; }
-  .report-document thead { display: table-header-group; }
-  .report-document .math-block { overflow: visible; white-space: normal; }
-  .report-document .katex { white-space: normal; }
-  .report-document svg { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-}

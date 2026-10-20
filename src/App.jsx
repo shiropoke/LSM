@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState, useContext, useCallback } from "react";
 import { HashRouter, useNavigate, useLocation } from "react-router-dom";
 import { calculateSampleStats, formatNumber, parseNumber, parsePastedPoints, calculateDatasets, validUncertainty } from "./utils/statistics.js";
-import { createDataset, defaultReport } from "./utils/datasets.js";
-import ReportOutput, { ReportSettings } from "./components/ReportOutput.jsx";
+import { createDataset, defaultAxisLabels } from "./utils/datasets.js";
+import AxisSettings from "./components/AxisSettings.jsx";
 import DatasetControls from "./components/DatasetControls.jsx";
 import ScatterPlot from "./components/ScatterPlot.jsx";
 import { resultLatex } from "./utils/latex.js";
@@ -579,7 +579,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
 
   const [datasets, setDatasets] = useState(() => [createDataset()]);
   const [activeDatasetId, setActiveDatasetId] = useState(() => datasets[0].id);
-  const [report, setReport] = useState(defaultReport);
+  const [axisLabels, setAxisLabels] = useState(defaultAxisLabels);
   const activeDataset = datasets.find(d => d.id === activeDatasetId) || datasets[0];
   const updateDataset = (id, changes) => setDatasets(previous => previous.map(d => d.id === id ? { ...d, ...changes } : d));
   const { mode, fitMode, dataPoints, manualStats } = activeDataset;
@@ -590,7 +590,6 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
   const [inputDX, setInputDX] = useState("");
   const [inputDY, setInputDY] = useState("");
   const [latexCopied, setLatexCopied] = useState(false);
-  const [showReport, setShowReport] = useState(false);
   const [inputX, setInputX] = useState("");
   const [inputY, setInputY] = useState("");
   const invalidPointInput = [inputX, inputY].some((value) => value !== "" && parseNumber(value) === null) || !validUncertainty(inputDX) || !validUncertainty(inputDY);
@@ -758,12 +757,12 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
   useEffect(() => {
     notifyDirty();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasets, activeDatasetId, report, sectionOrder, isDarkMode]);
+  }, [datasets, activeDatasetId, axisLabels, sectionOrder, isDarkMode]);
 
   // ========= exporter/importer 登録 =========
   useEffect(() => {
     registerExporter(() => ({
-      datasets, activeDatasetId, report,
+      datasets, activeDatasetId, axisLabels,
       mode,
       dataPoints,
       manualStats,
@@ -776,7 +775,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
       if (!snap) return;
       setDatasets(snap.datasets);
       setActiveDatasetId(snap.activeDatasetId);
-      setReport(snap.report || defaultReport());
+      setAxisLabels(snap.axisLabels || defaultAxisLabels());
       setSectionOrder(Array.isArray(snap.sectionOrder) ? snap.sectionOrder : ["regression", "analysis"]);
       setIsDarkMode(!!snap.isDarkMode);
 
@@ -791,7 +790,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
       setInputDY("");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasets, activeDatasetId, report, sectionOrder, isDarkMode]);
+  }, [datasets, activeDatasetId, axisLabels, sectionOrder, isDarkMode]);
 
   // ========= 共有リンク：現在の状態をコピー =========
   const handleCopyShareLink = async () => {
@@ -904,7 +903,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
           <div className="w-full aspect-[16/9] bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-700 relative overflow-hidden flex items-center justify-center">
             {series.some(d => d.visible && d.mode === "raw" && d.dataPoints.length > 0) ? (
               <div className="w-full h-full p-4">
-                <ScatterPlot series={series} isDarkMode={isDarkMode} labels={report} format={safeRound} />
+                <ScatterPlot series={series} isDarkMode={isDarkMode} labels={axisLabels} format={safeRound} />
               </div>
             ) : (
               <div className="text-slate-300 dark:text-slate-600 flex flex-col items-center gap-2">
@@ -1063,7 +1062,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
           </div>
         </div>
 
-        <ReportSettings value={report} onChange={setReport} />
+        <AxisSettings value={axisLabels} onChange={setAxisLabels} />
         <DatasetControls datasets={datasets} activeId={activeDataset.id} onSelect={selectDataset} onAdd={addDataset} onUpdate={updateDataset} onDelete={deleteDataset} />
         <div className="mb-6 flex flex-wrap gap-3 items-center">
           <label className="text-sm font-bold">近似方法 <select aria-label="近似方法" value={fitMode} onChange={e => setFitMode(e.target.value)} className="ml-2 rounded-lg border p-2 bg-white dark:bg-slate-800 dark:border-slate-600">
@@ -1071,7 +1070,6 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
           </select></label>
           <button disabled={result.slope === null} onClick={async () => { setLatexCopied(await copyToClipboard(resultLatex(result, mode, safeRound))); setTimeout(() => setLatexCopied(false), 1500); }} className="px-3 py-2 text-xs font-bold border rounded-lg bg-white dark:bg-slate-800 disabled:opacity-40">{latexCopied ? "LaTeXコピー完了" : "LaTeXコピー"}</button>
         </div>
-        <button onClick={() => setShowReport(true)} disabled={!series.some(d => d.visible && d.result.slope !== null)} className="mb-5 px-4 py-2 text-sm font-bold bg-indigo-600 text-white rounded-lg disabled:opacity-40">PDF出力</button>
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left */}
           <div className="lg:col-span-5 space-y-6">
@@ -1246,7 +1244,6 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
         </div>
       </div>
 
-      {showReport && <ReportOutput report={report} series={series} format={safeRound} onClose={() => setShowReport(false)} />}
       {/* Modals */}
       {showRefModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowRefModal(false)}>

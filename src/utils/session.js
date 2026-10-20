@@ -1,4 +1,4 @@
-import { createDataset, defaultReport, emptyManualStats } from "./datasets.js";
+import { createDataset, defaultAxisLabels, emptyManualStats } from "./datasets.js";
 import { parseNumber, validUncertainty } from "./statistics.js";
 
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -56,11 +56,13 @@ export const normalizeSnapshot = (snapshot) => {
     if (!datasets.length) datasets.push(createDataset());
     const activeDatasetId = datasets.some(d => d.id === ls.activeDatasetId) ? ls.activeDatasetId : datasets[0].id;
     const active = datasets.find(d => d.id === activeDatasetId);
-    const report = defaultReport();
-    for (const key of Object.keys(report)) if (typeof ls.report?.[key] === "string") report[key] = ls.report[key];
+    const axisLabels = defaultAxisLabels();
+    // Keep axis names and units from older sessions without retaining report-only settings.
+    const savedLabels = ls.axisLabels ?? ls.report;
+    for (const key of Object.keys(axisLabels)) if (typeof savedLabels?.[key] === "string") axisLabels[key] = savedLabels[key];
     const order = Array.isArray(ls.sectionOrder) ? ls.sectionOrder : [];
     result.ls = {
-      ...active, datasets, activeDatasetId, report,
+      ...active, datasets, activeDatasetId, axisLabels,
       sectionOrder: [...new Set([...order.filter(id => ["regression", "analysis"].includes(id)), "regression", "analysis"])],
       isDarkMode: !!ls.isDarkMode,
     };
