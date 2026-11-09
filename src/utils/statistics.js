@@ -1,3 +1,5 @@
+import { axisValue, hasLogScale, normalizeScales } from "./scales.js";
+
 // All calculations use unrounded values. Rounding is confined to presentation.
 export const parseNumber = (value) => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -122,10 +124,27 @@ export const calculateRegression = (data, fitMode = "linear") => {
   };
 };
 
-export const calculateDatasets = (datasets) => datasets.map(dataset => ({
-  ...dataset,
-  result: dataset.mode === "stats" ? calculateFromStats(dataset.manualStats, dataset.fitMode) : calculateRegression(dataset.dataPoints, dataset.fitMode),
-}));
+export const calculateDatasets = (datasets, settings = {}) => {
+  const scales = normalizeScales(settings);
+  return datasets.map(dataset => {
+    let result;
+    if (!hasLogScale(scales)) {
+      result = dataset.mode === "stats" ? calculateFromStats(dataset.manualStats, dataset.fitMode) : calculateRegression(dataset.dataPoints, dataset.fitMode);
+    } else if (dataset.mode === "stats") {
+      result = { ...calculateRegression([], dataset.fitMode), stats: { n: parseNumber(dataset.manualStats.n) }, errorMsg: "総和から対数変換後の総和は求められません。対数回帰にはデータ個別入力を使用してください。" };
+    } else {
+      const invalidAxis = ["x", "y"].find(axis => scales[`${axis}Scale`] === "log" && dataset.dataPoints.some(p => Number.isFinite(p[axis]) && p[axis] <= 0));
+      if (invalidAxis) {
+        const row = dataset.dataPoints.findIndex(p => p[invalidAxis] <= 0) + 1;
+        result = { ...calculateRegression([], dataset.fitMode), stats: { n: dataset.dataPoints.length }, errorMsg: `${invalidAxis.toUpperCase()}の対数を取るには正の値が必要です（${row}行目）。0以下の値を修正するか、線形軸に戻してください。` };
+      } else {
+        result = calculateRegression(dataset.dataPoints.map(p => ({ ...p, x: axisValue(p.x, scales.xScale), y: axisValue(p.y, scales.yScale) })), dataset.fitMode);
+        result.rows = result.rows.map((row, i) => ({ ...row, originalX: dataset.dataPoints[i].x, originalY: dataset.dataPoints[i].y }));
+      }
+    }
+    return { ...dataset, result: { ...result, scales } };
+  });
+};
 
 export const calculateFromStats = (input, fitMode = "linear") => {
   const throughOrigin = fitMode === "origin";

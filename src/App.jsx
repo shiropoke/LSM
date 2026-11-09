@@ -5,7 +5,9 @@ import { createDataset, defaultAxisLabels } from "./utils/datasets.js";
 import AxisSettings from "./components/AxisSettings.jsx";
 import DatasetControls from "./components/DatasetControls.jsx";
 import ScatterPlot from "./components/ScatterPlot.jsx";
-import { resultLatex } from "./utils/latex.js";
+import { originalModelEquation, resultLatex } from "./utils/latex.js";
+import { coordinateDescription, hasLogScale } from "./utils/scales.js";
+import MathFormula from "./components/MathFormula.jsx";
 import CalculationProcess from "./components/CalculationProcess.jsx";
 import { normalizeSessions, normalizeSnapshot } from "./utils/session.js";
 import {
@@ -483,10 +485,13 @@ const DetailedDataTable = ({ data, result, onRequestDownload }) => {
   if (!data || data.length === 0 || result.rows.length === 0) return null;
 
   const rows = result.rows;
+  const transformed = hasLogScale(result.scales);
+  const x = transformed ? "x" : "X", y = transformed ? "y" : "Y";
+  const columns = ["No", transformed ? `x=${result.scales.xScale === "log" ? "log10(X)" : "X"}` : x, transformed ? `y=${result.scales.yScale === "log" ? "log10(Y)" : "Y"}` : y, `${x}^2`, `${x}${y}`, `(${y}-a${x}${result.fitMode === "origin" ? "" : "-b"})^2`];
   const totals = { x: result.stats.sumX, y: result.stats.sumY, x2: result.stats.sumX2, xy: result.stats.sumXY, residualSq: result.sumResidualsCalc };
 
   const handleCopy = async () => {
-    const header = "No\tX\tY\tX^2\tXY\t(Y-aX-b)^2\n";
+    const header = columns.join("\t") + "\n";
     const body = rows
       .map((r) => `${r.no}\t${r.x}\t${r.y}\t${r.x2 ?? ""}\t${r.xy ?? ""}\t${r.residualSq !== null ? r.residualSq : ""}`)
       .join("\n");
@@ -497,7 +502,7 @@ const DetailedDataTable = ({ data, result, onRequestDownload }) => {
   };
 
   const handleDownloadRequest = () => {
-    const header = "No,X,Y,X^2,XY,(Y-aX-b)^2\n";
+    const header = columns.join(",") + "\n";
     const body = rows
       .map((r) => `${r.no},${r.x},${r.y},${r.x2 ?? ""},${r.xy ?? ""},${r.residualSq !== null ? r.residualSq : ""}`)
       .join("\n");
@@ -527,17 +532,18 @@ const DetailedDataTable = ({ data, result, onRequestDownload }) => {
           </button>
         </div>
       </div>
+      {transformed && <p className="px-4 py-2 text-xs text-slate-500 dark:text-slate-400">{coordinateDescription(result.scales)}。表・コピー・CSVは計算用座標です。</p>}
       <div className="overflow-x-auto max-h-64 overflow-y-auto">
         <table className="w-full text-sm text-right border-collapse">
           <thead className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 sticky top-0 z-10 shadow-sm">
             <tr>
               <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 text-center whitespace-nowrap">No.</th>
-              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">X</th>
-              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">Y</th>
-              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">X²</th>
-              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">XY</th>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">{columns[1]}</th>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">{columns[2]}</th>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">{x}²</th>
+              <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap">{x}{y}</th>
               <th className="px-4 py-2 font-medium border-b border-slate-200 dark:border-slate-700 whitespace-nowrap text-indigo-600 dark:text-indigo-400">
-                (Y - aX - b)²
+                {columns[5]}
               </th>
             </tr>
           </thead>
@@ -647,7 +653,9 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
     }
   };
 
-  const series = useMemo(() => calculateDatasets(datasets), [datasets]);
+  const { xScale, yScale } = axisLabels;
+  const logarithmic = hasLogScale(axisLabels);
+  const series = useMemo(() => calculateDatasets(datasets, { xScale, yScale }), [datasets, xScale, yScale]);
   const result = series.find(d => d.id === activeDataset.id).result;
   const selectDataset = (id) => {
     const dataset = datasets.find(d => d.id === id);
@@ -805,7 +813,8 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
         <div key="regression" className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200/60 dark:border-slate-700 overflow-hidden relative mb-6 last:mb-0">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500"></div>
           <div className="p-6 md:p-8 text-center">
-            <h2 className="text-sm font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4">近似直線</h2>
+            <h2 className="text-sm font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4">{logarithmic ? "対数座標での回帰結果" : "近似直線"}</h2>
+            {logarithmic && <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">{coordinateDescription(axisLabels)}。a・bと標準誤差は、この座標での直線 y = ax{fitMode === "origin" ? "" : " + b"}の係数です。</p>}
 
             {result.errorMsg ? (
               <div className="inline-flex items-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300 rounded-full font-medium text-sm border border-red-100 dark:border-red-800">
@@ -814,7 +823,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
             ) : (
               <div className="space-y-8">
                 <div className="whitespace-nowrap overflow-x-auto py-2 px-1 text-3xl md:text-5xl font-mono font-bold text-slate-800 dark:text-white tracking-tight">
-                  {result.slope !== null ? (
+                  {result.slope !== null ? logarithmic ? <MathFormula tex={originalModelEquation(result, safeRound)} /> : (
                     <>
                       y = <span className="text-indigo-600 dark:text-indigo-400">{safeRound(result.slope)}</span>x{" "}
                       {fitMode !== "origin" && <>{result.intercept >= 0 ? "+" : "-"}{" "}
@@ -827,7 +836,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg mx-auto">
                   <div className="p-5 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-700 flex flex-col items-center">
-                    <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">傾き a</div>
+                    <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">傾き a{logarithmic ? "（変換後）" : ""}</div>
                     <div className="text-3xl font-mono font-bold text-indigo-600 dark:text-indigo-400 mb-2">
                       {result.slope !== null ? safeRound(result.slope) : "---"}
                     </div>
@@ -840,7 +849,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                   </div>
 
                   <div className="p-5 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-700 flex flex-col items-center">
-                    <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">切片 b{fitMode === "origin" ? "（0固定）" : ""}</div>
+                    <div className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-1">切片 b{logarithmic ? "（変換後）" : ""}{fitMode === "origin" ? "（0固定）" : ""}</div>
                     <div className="text-3xl font-mono font-bold text-purple-600 dark:text-purple-400 mb-2">
                       {result.intercept !== null ? safeRound(result.intercept) : "---"}
                     </div>
@@ -885,13 +894,14 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
             <Activity className="w-4 h-4 text-indigo-500" /> データ分析
           </h3>
 
+          {logarithmic && <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">{coordinateDescription(axisLabels)}。統計量・残差平方和・R²・標準誤差は変換後の座標に基づきます。</p>}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-6">
             <StatBadge label="n" value={stats.n ?? "---"} />
-            <StatBadge label="ΣX" value={safeRound(stats.sumX)} />
-            <StatBadge label="ΣY" value={safeRound(stats.sumY)} />
-            <StatBadge label="ΣX²" value={safeRound(stats.sumX2)} />
-            <StatBadge label="ΣXY" value={safeRound(stats.sumXY)} />
-            <StatBadge label={fitMode === "origin" ? "Σ(Y-aX)²" : "Σ(Y-aX-b)²"} value={result.slope !== null ? safeRound(result.sumResidualsCalc) : "-"} highlight />
+            <StatBadge label={logarithmic ? "Σx" : "ΣX"} value={safeRound(stats.sumX)} />
+            <StatBadge label={logarithmic ? "Σy" : "ΣY"} value={safeRound(stats.sumY)} />
+            <StatBadge label={logarithmic ? "Σx²" : "ΣX²"} value={safeRound(stats.sumX2)} />
+            <StatBadge label={logarithmic ? "Σxy" : "ΣXY"} value={safeRound(stats.sumXY)} />
+            <StatBadge label={logarithmic ? fitMode === "origin" ? "Σ(y-ax)²" : "Σ(y-ax-b)²" : fitMode === "origin" ? "Σ(Y-aX)²" : "Σ(Y-aX-b)²"} value={result.slope !== null ? safeRound(result.sumResidualsCalc) : "-"} highlight />
           </div>
 
           {result.warningMsg && <p role="status" className="text-xs text-amber-600 mb-3">{result.warningMsg}</p>}
@@ -1066,7 +1076,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
         <DatasetControls datasets={datasets} activeId={activeDataset.id} onSelect={selectDataset} onAdd={addDataset} onUpdate={updateDataset} onDelete={deleteDataset} />
         <div className="mb-6 flex flex-wrap gap-3 items-center">
           <label className="text-sm font-bold">近似方法 <select aria-label="近似方法" value={fitMode} onChange={e => setFitMode(e.target.value)} className="ml-2 rounded-lg border p-2 bg-white dark:bg-slate-800 dark:border-slate-600">
-            <option value="linear">通常 y = ax + b</option><option value="origin">原点固定 y = ax</option>
+            <option value="linear">{logarithmic ? "変換後 y = ax + b" : "通常 y = ax + b"}</option><option value="origin">{logarithmic ? "変換後の切片0固定 y = ax" : "原点固定 y = ax"}</option>
           </select></label>
           <button disabled={result.slope === null} onClick={async () => { setLatexCopied(await copyToClipboard(resultLatex(result, mode, safeRound))); setTimeout(() => setLatexCopied(false), 1500); }} className="px-3 py-2 text-xs font-bold border rounded-lg bg-white dark:bg-slate-800 disabled:opacity-40">{latexCopied ? "LaTeXコピー完了" : "LaTeXコピー"}</button>
         </div>
@@ -1226,7 +1236,8 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
 
             {mode === "stats" && (
               <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                {logarithmic && <p role="alert" className="text-sm text-amber-600 mb-4">対数回帰には元の測定値が必要です。「データ個別入力」に切り替えてください。既存の総和入力は保持しています。</p>}
+                <fieldset disabled={logarithmic} className="grid grid-cols-1 sm:grid-cols-2 gap-5 disabled:opacity-50">
                   <InputCard label="データ個数 (n)" symbol="n" value={manualStats.n} onChange={(v) => handleManualChange("n", v)} required />
                   <InputCard label="Xの総和" symbol="ΣX" value={manualStats.sumX} onChange={(v) => handleManualChange("sumX", v)} />
                   <InputCard label="Yの総和" symbol="ΣY" value={manualStats.sumY} onChange={(v) => handleManualChange("sumY", v)} />
@@ -1234,7 +1245,7 @@ const LeastSquaresErrorCalc = ({ registerExporter, registerImporter, notifyDirty
                   <InputCard label="XとYの積和" symbol="ΣXY" value={manualStats.sumXY} onChange={(v) => handleManualChange("sumXY", v)} />
                   <InputCard label="Yの二乗和（R²計算用・任意）" symbol="ΣY²" value={manualStats.sumY2} onChange={(v) => handleManualChange("sumY2", v)} />
                   <InputCard label="残差平方和" symbol="Σ(Y-aX-b)²" value={manualStats.sumResiduals} onChange={(v) => handleManualChange("sumResiduals", v)} highlight plClass="pl-28" />
-                </div>
+                </fieldset>
               </div>
             )}
           </div>

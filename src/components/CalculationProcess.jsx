@@ -1,8 +1,10 @@
 import MathFormula from "./MathFormula.jsx";
 import { calculationSteps } from "../utils/latex.js";
+import { coordinateDescription, hasLogScale } from "../utils/scales.js";
 
 export default function CalculationProcess({ result, mode, format }) {
   return <div className="space-y-5 text-xs leading-relaxed text-left break-words" data-testid="calculation-process">
+    {hasLogScale(result.scales) && <p>{coordinateDescription(result.scales)}。この表のx・y、残差は変換後の座標です。元の測定値はデータ入力表に保持しています。</p>}
     {mode === "raw" && <div className="overflow-x-auto"><table className="w-full text-right font-mono whitespace-nowrap">
       <thead><tr>{["i", "xᵢ", "yᵢ", "xᵢ²", "xᵢyᵢ", "eᵢ", "eᵢ²"].map(label => <th key={label} className="px-2 py-2">{label}</th>)}</tr></thead>
       <tbody>{result.rows.map(row => <tr key={row.no}>{[row.no, row.x, row.y, row.x2, row.xy, row.residual, row.residualSq].map((v, i) => <td key={i} className="px-2 py-1">{i === 0 ? v : format(v)}</td>)}</tr>)}</tbody>

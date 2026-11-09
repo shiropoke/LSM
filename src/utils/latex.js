@@ -1,10 +1,21 @@
 import { formatNumber } from "./statistics.js";
+import { coordinateDescription, hasLogScale, normalizeScales } from "./scales.js";
 
 export const texNumber = (value, format = formatNumber) => {
   if (value === null || value === undefined || (typeof value === "number" && !Number.isFinite(value))) return "\\mathrm{undefined}";
   const text = String(format(value));
   const match = text.match(/^([+-]?[\d.]+)e([+-]?\d+)$/i);
   return match ? `${match[1]}\\times10^{${Number(match[2])}}` : text;
+};
+
+export const originalModelEquation = (result, format = formatNumber) => {
+  const { xScale, yScale } = normalizeScales(result.scales);
+  const a = `\\left(${texNumber(result.slope, format)}\\right)`;
+  const b = result.fitMode === "origin" ? "" : `+\\left(${texNumber(result.intercept, format)}\\right)`;
+  if (xScale === "log" && yScale === "log") return `Y=${result.fitMode === "origin" ? "" : `10^{${texNumber(result.intercept, format)}}`}X^{${texNumber(result.slope, format)}}`;
+  if (yScale === "log") return `Y=10^{${a}X${b}}`;
+  if (xScale === "log") return `Y=${a}\\log_{10}X${b}`;
+  return `y=${a}x${b}`;
 };
 
 // Each expression is a short independent block so long calculations can paginate.
@@ -37,6 +48,16 @@ export const calculationSteps = (r, mode = "raw", format = formatNumber) => {
   const q = r.sumResidualsCalc;
   const sections = [];
   const add = (title, formulas, notes = []) => sections.push({ title, formulas, notes });
+  if (hasLogScale(r.scales)) {
+    const { xScale, yScale } = normalizeScales(r.scales);
+    add("0. 対数変換と回帰の座標", [
+      `x_i=${xScale === "log" ? "\\log_{10}X_i" : "X_i"},\\quad y_i=${yScale === "log" ? "\\log_{10}Y_i" : "Y_i"}`,
+      ...r.rows.flatMap(row => [
+        `x_{${row.no}}=${xScale === "log" ? `\\log_{10}${p(row.originalX)}` : p(row.originalX)}\\approx ${f(row.x)}`,
+        `y_{${row.no}}=${yScale === "log" ? `\\log_{10}${p(row.originalY)}` : p(row.originalY)}\\approx ${f(row.y)}`,
+      ]),
+    ], ["X・Yは入力した測定値、x・yは回帰計算に使用する座標です。対数の底は10です。単位付きの値は、指定した単位で表した数値を使います。", `${coordinateDescription(r.scales)}。以下の総和・残差・R²・標準誤差は、この計算用座標に対する値です。`]);
+  }
   add("1. 使用データと総和", [
     `n=${n}`, `\\sum x_i\\approx ${f(sumX)},\\quad\\sum y_i\\approx ${f(sumY)}`,
     `\\sum x_i^2\\approx ${f(sumX2)},\\quad\\sum x_i y_i\\approx ${f(sumXY)}`,
@@ -108,7 +129,8 @@ export const calculationSteps = (r, mode = "raw", format = formatNumber) => {
     seFormulas.push(`a=${f(r.slope)}\\pm ${f(r.stdErrA)}`);
     if (!origin) seFormulas.push(`b=${f(r.intercept)}\\pm ${f(r.stdErrB)}`);
   }
-  add("6. 自由度・係数の標準誤差", seFormulas, [r.stdErrA === null ? "自由度が0、または残差平方和が未入力のため標準誤差を計算できません。" : "独立・等分散のy方向誤差を仮定した標準誤差です。", ...(origin ? ["切片は0に固定して推定しないため、切片の標準誤差はありません。"] : [])]);
+  add("6. 自由度・係数の標準誤差", seFormulas, [r.stdErrA === null ? "自由度が0、または残差平方和が未入力のため標準誤差を計算できません。" : "独立・等分散の計算用y方向誤差を仮定した標準誤差です。", ...(origin ? ["切片は0に固定して推定しないため、切片の標準誤差はありません。"] : [])]);
+  if (hasLogScale(r.scales)) add("7. 元の測定座標での近似式", [originalModelEquation(r, format)], ["a・bとその標準誤差は変換後の直線に対する値です。Yを対数変換した場合、逆変換した式は対数座標での予測を表し、元のYの算術平均を推定する補正は行っていません。"]);
   return sections;
 };
 

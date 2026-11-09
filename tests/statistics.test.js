@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { calculateRegression, calculateFromStats, calculateSampleStats, parseNumber, formatNumber, parsePastedPoints, predictY, sum, calculateDatasets, validUncertainty } from "../src/utils/statistics.js";
 import { normalizeSnapshot, normalizeSessions } from "../src/utils/session.js";
-import { createDataset } from "../src/utils/datasets.js";
+import { createDataset, defaultAxisLabels } from "../src/utils/datasets.js";
 import { plotBounds } from "../src/utils/plot.js";
 
 const near = (actual, expected, tolerance = 1e-12) => assert.ok(Math.abs(actual - expected) <= tolerance * Math.max(1, Math.abs(expected)), `${actual} != ${expected}`);
@@ -259,7 +259,7 @@ test("multiple datasets, visibility, color, uncertainty and axis labels round-tr
   datasets[0].dataPoints = [{ id: "p", x: 1, y: 2, dx: 0, dy: 0.2 }];
   datasets[1].visible = false;
   datasets[1].fitMode = "origin";
-  const ls = { datasets, activeDatasetId: datasets[1].id, axisLabels: { xName: "時間", xUnit: "s", yName: "距離", yUnit: "m" } };
+  const ls = { datasets, activeDatasetId: datasets[1].id, axisLabels: { ...defaultAxisLabels(), xName: "時間", xUnit: "s", yName: "距離", yUnit: "m" } };
   const restored = normalizeSnapshot(JSON.parse(JSON.stringify({ v: 1, ls }))).ls;
   assert.deepEqual(restored.datasets, datasets);
   assert.deepEqual(restored.axisLabels, ls.axisLabels);
@@ -270,12 +270,12 @@ test("multiple datasets, visibility, color, uncertainty and axis labels round-tr
 test("legacy report settings retain only graph axis labels", () => {
   const report = { title: "物理実験", xName: "時間", xUnit: "s", yName: "距離", yUnit: "m" };
   const restored = normalizeSnapshot({ ls: { report } }).ls;
-  assert.deepEqual(restored.axisLabels, { xName: "時間", xUnit: "s", yName: "距離", yUnit: "m" });
+  assert.deepEqual(restored.axisLabels, { ...defaultAxisLabels(), xName: "時間", xUnit: "s", yName: "距離", yUnit: "m" });
   assert.equal(Object.hasOwn(restored, "report"), false);
   assert.equal(Object.hasOwn(restored.axisLabels, "title"), false);
-  const axisLabels = { xName: "電流", xUnit: "A", yName: "電圧", yUnit: "V" };
+  const axisLabels = { ...defaultAxisLabels(), xName: "電流", xUnit: "A", yName: "電圧", yUnit: "V" };
   assert.deepEqual(normalizeSnapshot({ ls: { report, axisLabels } }).ls.axisLabels, axisLabels);
-  assert.deepEqual(normalizeSnapshot({ ls: {} }).ls.axisLabels, { xName: "X", xUnit: "", yName: "Y", yUnit: "" });
+  assert.deepEqual(normalizeSnapshot({ ls: {} }).ls.axisLabels, defaultAxisLabels());
 });
 
 test("error-bar CSV round-trips optional empty cells and rejects negative uncertainty", () => {

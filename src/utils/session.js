@@ -1,5 +1,6 @@
 import { createDataset, defaultAxisLabels, emptyManualStats } from "./datasets.js";
 import { parseNumber, validUncertainty } from "./statistics.js";
+import { normalizeScales } from "./scales.js";
 
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const makeId = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -60,6 +61,7 @@ export const normalizeSnapshot = (snapshot) => {
     // Keep axis names and units from older sessions without retaining report-only settings.
     const savedLabels = ls.axisLabels ?? ls.report;
     for (const key of Object.keys(axisLabels)) if (typeof savedLabels?.[key] === "string") axisLabels[key] = savedLabels[key];
+    Object.assign(axisLabels, normalizeScales(savedLabels));
     const order = Array.isArray(ls.sectionOrder) ? ls.sectionOrder : [];
     result.ls = {
       ...active, datasets, activeDatasetId, axisLabels,
